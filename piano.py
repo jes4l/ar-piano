@@ -4,6 +4,7 @@ import mediapipe as mp
 import pygame
 import random
 import math
+import time
 
 from PyQt5.QtGui import (
     QImage, QPixmap, QGuiApplication, QPainter, QPen, QColor
@@ -24,22 +25,22 @@ class SkeletonOverlay(QLabel):
         # Let mouse events pass through
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
+        # For skeleton drawing
         self.skeleton_data = []  # line segments: [((x1, y1), (x2, y2)), ...]
-        self.points_data = []    # landmark points: [(x, y), ...]
+        self.points_data = []    # list of (x, y)
 
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Draw skeleton connections (white lines)
+        # For demonstration: draw lines in white, points in red
         pen_line = QPen(QColor(255, 255, 255, 200), 3)
         painter.setPen(pen_line)
         for line in self.skeleton_data:
             (x1, y1), (x2, y2) = line
             painter.drawLine(QPoint(x1, y1), QPoint(x2, y2))
 
-        # Draw landmark points (red circles)
         pen_points = QPen(QColor(255, 0, 0, 200), 6)
         painter.setPen(pen_points)
         for (px, py) in self.points_data:
@@ -48,7 +49,7 @@ class SkeletonOverlay(QLabel):
 
 class FlyingNote(QLabel):
     """
-    A QLabel that displays a random note image and smoothly moves in a random direction,
+    A QLabel that displays a random note image and moves in a random direction,
     then destroys itself after 1 second.
     """
     def __init__(self, parent, pixmap, start_x, start_y):
@@ -58,71 +59,171 @@ class FlyingNote(QLabel):
         self.move(start_x, start_y)
         self.show()
 
-        # Keep track of time
-        self.lifetime_ms = 1000  # 1 second
+        # 1-second lifetime
+        self.lifetime_ms = 1000
         self.elapsed_ms = 0
 
         # Random velocity
         angle = random.uniform(0, 2 * math.pi)
-        speed = random.uniform(1.0, 3.0)  # pixels per update
+        speed = random.uniform(1.0, 3.0)
         self.vx = speed * math.cos(angle)
         self.vy = speed * math.sin(angle)
 
-        # Timer for movement updates (about ~30 fps => 33ms)
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_position)
-        self.update_timer.start(33)
+        self.update_timer.start(33)  # ~30 FPS
 
     def update_position(self):
         self.elapsed_ms += 33
         if self.elapsed_ms >= self.lifetime_ms:
-            # Time to destroy
             self.update_timer.stop()
             self.deleteLater()
             return
 
-        # Move by velocity
-        x = self.x() + self.vx
-        y = self.y() + self.vy
-        self.move(int(x), int(y))
+        # Move
+        nx = self.x() + self.vx
+        ny = self.y() + self.vy
+        self.move(int(nx), int(ny))
 
 
 class EffectOverlay(QLabel):
     """
-    Another transparent overlay widget that sits on top of everything (including skeleton).
-    Used to host FlyingNote labels so they appear above all other widgets.
+    A transparent overlay (above skeleton) to host FlyingNote objects so they appear on top.
     """
     def __init__(self, parent, width, height):
         super().__init__(parent)
         self.setGeometry(0, 0, width, height)
         self.setStyleSheet("background: transparent;")
-        # Also pass mouse events through
+        # Let mouse events pass through
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+
+class TileOverlay(QLabel):
+    """
+    Overlay for dropping piano tiles that auto-play notes for a simple 'Happy Birthday' demo.
+    """
+    def __init__(self, parent, width, height, piano):
+        super().__init__(parent)
+        self.setGeometry(0, 0, width, height)
+        self.setStyleSheet("background: transparent;")
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+        self.piano = piano  # reference to ARPiano for note triggers, key info
+        self.tiles = []
+
+        # We'll store each tile in self.tiles, update them in a timer
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_tiles)
+        self.update_timer.start(33)  # ~30 FPS
+
+    def spawnTile(self, note_name, fall_speed=4):
+        """
+        Create a tile that corresponds to a note_name. The tile will be sized and
+        horizontally aligned with the note's button, then fall until it hits that key.
+        Once it 'hits' the key, we trigger note_name.
+        """
+        # Find the key geometry for this note
+        btn_rect = None
+        for (btn, nm) in self.piano.keys_info:
+            if nm == note_name:
+                btn_rect = btn.geometry()
+                break
+        if not btn_rect:
+            return
+
+        tile = FallingTile(self, self.piano, note_name, btn_rect, fall_speed)
+        self.tiles.append(tile)
+
+    def update_tiles(self):
+        # Move all active tiles
+        for tile in self.tiles[:]:
+            tile.update_position()
+            if tile.is_finished:
+                self.tiles.remove(tile)
+                tile.deleteLater()
+
+
+class FallingTile(QLabel):
+    """
+    A simple colored rectangle that falls from the top and aligns with a given piano key.
+    Once it intersects the key region, it plays the note, then we remove it.
+    """
+    def __init__(self, parent, piano, note_name, key_rect, fall_speed):
+        super().__init__(parent)
+        self.piano = piano
+        self.note_name = note_name
+        self.key_rect = key_rect
+        self.fall_speed = fall_speed
+        self.is_finished = False
+
+        # We'll make the tile bigger in height so it holds the note visually
+        tile_width = self.key_rect.width()
+        tile_height = self.key_rect.height() * 1.5  # 50% taller
+        self.resize(tile_width, int(tile_height))
+
+        # Center horizontally over the key
+        start_x = self.key_rect.x()
+        # Start from top (negative y) so it drops in from "ceiling"
+        start_y = -tile_height
+        self.move(int(start_x), int(start_y))
+
+        # We'll pick a color for fun
+        # You could randomize color or pick per note
+        self.color = QColor(0, 180, 255, 180)  # semi-transparent blue
+        self.show()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        pen = QPen(Qt.NoPen)
+        painter.setPen(pen)
+        painter.setBrush(self.color)
+        painter.drawRect(self.rect())
+
+    def update_position(self):
+        if self.is_finished:
+            return
+
+        # Move down
+        nx = self.x()
+        ny = self.y() + self.fall_speed
+        self.move(nx, ny)
+
+        # Check if we intersect the key
+        # We'll say if the tile's bottom >= key_rect.y() => we've 'hit' the key
+        tile_bottom = ny + self.height()
+        key_top = self.key_rect.y()
+
+        if tile_bottom >= key_top:
+            # Trigger note (once)
+            self.piano.trigger_note_by_name(self.note_name)
+            # Mark finished
+            self.is_finished = True
 
 
 class ARPiano(QMainWindow):
     """
     AR Piano that:
-    - Shows webcam feed in the background.
+    - Displays a webcam feed in the background.
     - Overlays piano keys near the bottom.
     - Tracks fingertips (index, middle, ring, pinky) with MediaPipe for note triggers.
     - Draws skeleton with a SkeletonOverlay.
     - Spawns FlyingNote objects in an EffectOverlay on top, which move & vanish after 1s.
+    - NOW spawns FallingTile rectangles in a TileOverlay for a simple 'Happy Birthday' auto-play.
     """
 
-    # Fingertips & PIPs
     FINGER_TIPS =  [8, 12, 16, 20]   # index, middle, ring, pinky
     FINGER_PIPS =  [6, 10, 14, 18]
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AR Piano + Flying Notes")
+        self.setWindowTitle("AR Piano + Flying Notes + Auto-Play Tiles")
 
-        # 1) Initialize Pygame mixer
+        # 1) Initialize Pygame
         pygame.init()
         pygame.mixer.init()
 
-        # 2) Dict for {note_name: Sound}
+        # 2) Dictionary for {note_name: Sound}
         self.sounds = {}
 
         # 3) Detect screen size
@@ -142,7 +243,7 @@ class ARPiano(QMainWindow):
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.screen_w)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.screen_h)
 
-        # 6) Label for camera
+        # 6) Background camera label
         self.camera_label = QLabel(self)
         self.camera_label.setGeometry(0, 0, self.screen_w, self.screen_h)
         self.camera_label.setStyleSheet("background-color: black;")
@@ -151,7 +252,7 @@ class ARPiano(QMainWindow):
         self.load_sounds()
         self.load_note_images()
 
-        # 8) Piano keys
+        # 8) Create piano keys
         self.keys_info = []
         self.create_white_keys()
         self.create_black_keys()
@@ -176,15 +277,23 @@ class ARPiano(QMainWindow):
         self.skeleton_overlay = SkeletonOverlay(self, self.screen_w, self.screen_h)
         self.skeleton_overlay.show()
 
-        # 13) Effects overlay (on top of skeleton)
+        # 13) Effects overlay (flying notes)
         self.effects_overlay = EffectOverlay(self, self.screen_w, self.screen_h)
-        self.effects_overlay.raise_()  # ensure it's on top
+        self.effects_overlay.raise_()
         self.effects_overlay.show()
 
-        # 14) Timer for camera updates
+        # 14) Tile overlay (auto-play notes)
+        self.tile_overlay = TileOverlay(self, self.screen_w, self.screen_h, piano=self)
+        self.tile_overlay.raise_()
+        self.tile_overlay.show()
+
+        # 15) Timer for camera updates
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_camera)
         self.timer.start(30)
+
+        # 16) Spawn the "Happy Birthday" tiles after a short delay
+        QTimer.singleShot(2000, self.spawnHappyBirthdayTiles)
 
     def load_sounds(self):
         base = "C:/Users/LLR User/Desktop/music/Sounds/"
@@ -199,7 +308,7 @@ class ARPiano(QMainWindow):
 
     def load_note_images(self):
         """
-        Load Assets/note1.png..note5.png into a list.
+        Load note1..note5.png for flying notes effect
         """
         self.notePixmaps = []
         for i in range(1, 6):
@@ -280,56 +389,51 @@ class ARPiano(QMainWindow):
             self.keys_info.append((btn, note_name))
 
     def play_sound(self):
-        # Called when key is clicked
+        """
+        Called when a key is clicked (mouse or keyboard).
+        """
         note_name = self.sender().objectName()
         self.trigger_note_by_name(note_name)
 
     def trigger_note_by_name(self, note_name):
-        # Plays note & spawns flying note
+        """
+        Plays the note and spawns a flying note image effect.
+        """
         if note_name in self.sounds:
             self.sounds[note_name].play()
 
-        # Find button geometry
-        for (btn, name) in self.keys_info:
-            if name == note_name:
+        # find key geometry
+        for (btn, nm) in self.keys_info:
+            if nm == note_name:
                 self.spawnFlyingNote(btn)
                 break
 
     def spawnFlyingNote(self, btn):
         """
-        Creates a random note image, scaled randomly, and places a FlyingNote
-        in the effects_overlay. The note label moves in a random direction, then vanishes.
+        Creates a random scaled note image, placed near the button, that floats away.
         """
         if not self.notePixmaps:
             return
         pix_original = random.choice(self.notePixmaps)
-
-        # random scale
         scale_factor = random.uniform(0.5, 1.2)
-        scaled_w = int(pix_original.width() * scale_factor)
-        scaled_h = int(pix_original.height() * scale_factor)
-        pix_scaled = pix_original.scaled(scaled_w, scaled_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        sw = int(pix_original.width() * scale_factor)
+        sh = int(pix_original.height() * scale_factor)
+        pix_scaled = pix_original.scaled(sw, sh, Qt.KeepAspectRatio, Qt.SmoothTransformation)
 
-        # position near the button center
         rect = btn.geometry()
-        center_x = rect.x() + rect.width()//2
-        center_y = rect.y() + rect.height()//2
+        cx = rect.x() + rect.width()//2
+        cy = rect.y() + rect.height()//2
+        offx = random.randint(-rect.width()//2, rect.width()//2)
+        offy = random.randint(-rect.height()//2, rect.height()//2)
+        sx = cx + offx - sw//2
+        sy = cy + offy - sh//2
 
-        # random offset
-        off_x = random.randint(-rect.width()//2, rect.width()//2)
-        off_y = random.randint(-rect.height()//2, rect.height()//2)
-        start_x = center_x + off_x - scaled_w//2
-        start_y = center_y + off_y - scaled_h//2
-
-        # Create a flying note label inside the effects_overlay
-        note_label = FlyingNote(self.effects_overlay, pix_scaled, start_x, start_y)
-        # The note_label raises itself automatically, but let's ensure overlay is on top
+        note_label = FlyingNote(self.effects_overlay, pix_scaled, sx, sy)
         self.effects_overlay.raise_()
 
     def update_camera(self):
         """
-        Grab frame, flip horizontally, process with MediaPipe, do skeleton + fingertip collision.
-        Update skeleton overlay. Show feed in camera_label.
+        Updates camera feed, does fingertip detection, triggers notes, draws skeleton, etc.
         """
         ret, frame = self.cap.read()
         if not ret:
@@ -347,31 +451,32 @@ class ARPiano(QMainWindow):
 
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
-                # Convert landmarks to pixel coords
+                # convert to pixel coords
                 pts = []
                 for lm in hand_landmarks.landmark:
                     px = int(lm.x * w)
                     py = int(lm.y * h)
                     pts.append((px, py))
 
-                # Build skeleton lines
+                # build skeleton lines
                 for (start_idx, end_idx) in self.HAND_CONNECTIONS:
                     sx, sy = pts[start_idx]
                     ex, ey = pts[end_idx]
                     all_lines.append([(sx, sy), (ex, ey)])
                 all_points.extend(pts)
 
-                # Fingertip collision if extended
+                # check fingertips
                 for tip_idx, pip_idx in zip(self.FINGER_TIPS, self.FINGER_PIPS):
                     tip_x, tip_y = pts[tip_idx]
                     pip_x, pip_y = pts[pip_idx]
-                    if tip_y < pip_y:  # extended
-                        # Collision check
-                        for (btn, note_name) in self.keys_info:
+                    # if finger extended
+                    if tip_y < pip_y:
+                        # collision with keys
+                        for (btn, nm) in self.keys_info:
                             rect = btn.geometry()
                             if (rect.left() <= tip_x <= rect.right() and
                                 rect.top() <= tip_y <= rect.bottom()):
-                                current_touches.add(note_name)
+                                current_touches.add(nm)
 
         # Debounce
         newly_pressed = current_touches - self.active_notes
@@ -380,12 +485,12 @@ class ARPiano(QMainWindow):
 
         self.active_notes = current_touches
 
-        # Update skeleton overlay
+        # skeleton overlay
         self.skeleton_overlay.skeleton_data = all_lines
         self.skeleton_overlay.points_data = all_points
         self.skeleton_overlay.update()
 
-        # Show camera feed
+        # show camera feed
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
         qt_img = QImage(frame_bgr.data, w, h, w*3, QImage.Format_BGR888)
         pixmap = QPixmap.fromImage(qt_img)
@@ -395,12 +500,43 @@ class ARPiano(QMainWindow):
                                Qt.SmoothTransformation)
         self.camera_label.setPixmap(pixmap)
 
+    def spawnHappyBirthdayTiles(self):
+        """
+        Spawns a simple sequence of tiles for a basic 'Happy Birthday' melody.
+        Each tile will fall from top and auto-play the note.
+        The intervals here are approximate; tweak them as desired.
+        """
+        # Basic 'Happy Birthday' in C major (one-octaveish) – example with c4..c5
+        # We'll define each note and the time gap (ms) until next tile
+        # (not exact timing, but simple enough for a demo).
+
+        # Sequence:
+        #    G4  G4  A4  G4   C5  B4
+        #    G4  G4  A4  G4   D5  C5
+        #    G4  G4  G5  E5   C5  B4  A4
+        #    F5  F5  E5  C5   D5  C5
+        # We'll map them to the note names we have:
+        # 'g4' 'g4' 'a4' 'g4' 'c5' 'b4', etc.
+
+        melody = [
+            ('g4', 0),    ('g4', 800),  ('a4', 800), ('g4', 800), ('c5', 800), ('b4', 1000),
+            ('g4', 800),  ('g4', 800),  ('a4', 800), ('g4', 800), ('d5', 800), ('c5', 1000),
+            ('g4', 800),  ('g4', 800),  ('g5', 800), ('e5', 800), ('c5', 800), ('b4', 800), ('a4', 1200),
+            ('f5', 800),  ('f5', 800),  ('e5', 800), ('c5', 800), ('d5', 800), ('c5', 1000)
+        ]
+        # We'll schedule these tiles with a cumulative time
+        current_time = 0
+        for (note_name, delta) in melody:
+            current_time += delta
+            QTimer.singleShot(current_time, lambda n=note_name: self.tile_overlay.spawnTile(n, fall_speed=4))
+
     def closeEvent(self, event):
         if self.cap.isOpened():
             self.cap.release()
         self.hands.close()
         pygame.quit()
         super().closeEvent(event)
+
 
 def main():
     app = QApplication(sys.argv)
