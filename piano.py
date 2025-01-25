@@ -1,531 +1,225 @@
-from PyQt5 import QtCore, QtWidgets
 import sys
+import cv2
 import pygame
+from PyQt5.QtGui import QImage, QPixmap, QGuiApplication
+from PyQt5.QtWidgets import (
+    QApplication, QMainWindow, QLabel, QPushButton, QStatusBar
+)
+from PyQt5.QtCore import QTimer, QRect, Qt
 
+class ARPiano(QMainWindow):
+    """
+    A PyQt5 window that:
+      - Detects screen size and uses it for the window.
+      - Attempts to set the camera to the same resolution.
+      - Overlays proportionally scaled piano keys near the bottom, centered.
+      - Stretches the camera feed to fill the entire window (no black bars).
+      - Plays notes via pygame mixer when keys are clicked or shortcuts are pressed.
+    """
+    def __init__(self):
+        super().__init__()
 
-class Ui_MainWindow(object):
-    def setupUi(self, MainWindow):
-        MainWindow.setObjectName("MainWindow")
-        MainWindow.resize(645, 245)
-        self.mw = MainWindow
-        self.centralwidget = QtWidgets.QWidget(MainWindow)
-        self.centralwidget.setObjectName("centralwidget")
+        self.setWindowTitle("AR Piano Demo - Full Screen Matching")
 
-        # -------------- White Keys --------------
-        self.c4 = QtWidgets.QPushButton(self.centralwidget)
-        self.c4.setGeometry(QtCore.QRect(20, 30, 41, 181))
-        self.c4.setStyleSheet("#c4{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#c4:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.c4.setText("")
-        self.c4.setObjectName("c4")
+        # 1) Initialize pygame mixer for audio
+        pygame.init()
+        pygame.mixer.init()
 
-        self.d4 = QtWidgets.QPushButton(self.centralwidget)
-        self.d4.setGeometry(QtCore.QRect(60, 30, 41, 181))
-        self.d4.setStyleSheet("#d4{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#d4:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.d4.setText("")
-        self.d4.setObjectName("d4")
-
-        self.e4 = QtWidgets.QPushButton(self.centralwidget)
-        self.e4.setGeometry(QtCore.QRect(100, 30, 41, 181))
-        self.e4.setStyleSheet("#e4{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#e4:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.e4.setText("")
-        self.e4.setObjectName("e4")
-
-        self.f4 = QtWidgets.QPushButton(self.centralwidget)
-        self.f4.setGeometry(QtCore.QRect(140, 30, 41, 181))
-        self.f4.setStyleSheet("#f4{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#f4:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.f4.setText("")
-        self.f4.setObjectName("f4")
-
-        self.g4 = QtWidgets.QPushButton(self.centralwidget)
-        self.g4.setGeometry(QtCore.QRect(180, 30, 41, 181))
-        self.g4.setStyleSheet("#g4{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#g4:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.g4.setText("")
-        self.g4.setObjectName("g4")
-
-        self.a4 = QtWidgets.QPushButton(self.centralwidget)
-        self.a4.setGeometry(QtCore.QRect(220, 30, 41, 181))
-        self.a4.setStyleSheet("#a4{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#a4:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.a4.setText("")
-        self.a4.setObjectName("a4")
-
-        self.b4 = QtWidgets.QPushButton(self.centralwidget)
-        self.b4.setGeometry(QtCore.QRect(260, 30, 41, 181))
-        self.b4.setStyleSheet("#b4{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#b4:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.b4.setText("")
-        self.b4.setObjectName("b4")
-
-        self.c5 = QtWidgets.QPushButton(self.centralwidget)
-        self.c5.setGeometry(QtCore.QRect(300, 30, 41, 181))
-        self.c5.setStyleSheet("#c5{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#c5:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.c5.setText("")
-        self.c5.setObjectName("c5")
-
-        self.d5 = QtWidgets.QPushButton(self.centralwidget)
-        self.d5.setGeometry(QtCore.QRect(340, 30, 41, 181))
-        self.d5.setStyleSheet("#d5{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#d5:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.d5.setText("")
-        self.d5.setObjectName("d5")
-
-        self.e5 = QtWidgets.QPushButton(self.centralwidget)
-        self.e5.setGeometry(QtCore.QRect(380, 30, 41, 181))
-        self.e5.setStyleSheet("#e5{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#e5:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.e5.setText("")
-        self.e5.setObjectName("e5")
-
-        self.f5 = QtWidgets.QPushButton(self.centralwidget)
-        self.f5.setGeometry(QtCore.QRect(420, 30, 41, 181))
-        self.f5.setStyleSheet("#f5{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#f5:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.f5.setText("")
-        self.f5.setObjectName("f5")
-
-        self.g5 = QtWidgets.QPushButton(self.centralwidget)
-        self.g5.setGeometry(QtCore.QRect(460, 30, 41, 181))
-        self.g5.setStyleSheet("#g5{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#g5:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.g5.setText("")
-        self.g5.setObjectName("g5")
-
-        self.a5 = QtWidgets.QPushButton(self.centralwidget)
-        self.a5.setGeometry(QtCore.QRect(500, 30, 41, 181))
-        self.a5.setStyleSheet("#a5{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#a5:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.a5.setText("")
-        self.a5.setObjectName("a5")
-
-        self.b5 = QtWidgets.QPushButton(self.centralwidget)
-        self.b5.setGeometry(QtCore.QRect(540, 30, 41, 181))
-        self.b5.setStyleSheet("#b5{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#b5:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.b5.setText("")
-        self.b5.setObjectName("b5")
-
-        self.c6 = QtWidgets.QPushButton(self.centralwidget)
-        self.c6.setGeometry(QtCore.QRect(580, 30, 41, 181))
-        self.c6.setStyleSheet("#c6{\n"
-                              "background-color: rgb(242, 242, 242);\n"
-                              "background-color: qlineargradient(spread:pad, x1:1, y1:0.711, "
-                              "x2:0.903455, y2:0.711, stop:0 rgba(0, 0, 0, 255), "
-                              "stop:1 rgba(255, 255, 255, 255));\n"
-                              "}\n"
-                              "#c6:pressed{\n"
-                              "background-color: rgb(250, 250, 250);\n"
-                              "}")
-        self.c6.setText("")
-        self.c6.setObjectName("c6")
-
-        # -------------- Black Keys --------------
-        self.c40 = QtWidgets.QPushButton(self.centralwidget)
-        self.c40.setGeometry(QtCore.QRect(40, 30, 31, 111))
-        self.c40.setStyleSheet("#c40{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "background-color: qlineargradient(spread:pad, x1:0.028, y1:0.619, "
-                               "x2:1, y2:0.494, stop:0.852273 rgba(0, 0, 0, 250), "
-                               "stop:1 rgba(255, 255, 255, 255));\n"
-                               "}\n"
-                               "#c40:pressed{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "}")
-        self.c40.setText("")
-        self.c40.setObjectName("c40")
-
-        self.d40 = QtWidgets.QPushButton(self.centralwidget)
-        self.d40.setGeometry(QtCore.QRect(80, 30, 31, 111))
-        self.d40.setStyleSheet("#d40{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "background-color: qlineargradient(spread:pad, x1:0.028, y1:0.619, "
-                               "x2:1, y2:0.494, stop:0.852273 rgba(0, 0, 0, 250), "
-                               "stop:1 rgba(255, 255, 255, 255));\n"
-                               "}\n"
-                               "#d40:pressed{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "}")
-        self.d40.setText("")
-        self.d40.setObjectName("d40")
-
-        self.f40 = QtWidgets.QPushButton(self.centralwidget)
-        self.f40.setGeometry(QtCore.QRect(160, 30, 31, 111))
-        self.f40.setStyleSheet("#f40{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "background-color: qlineargradient(spread:pad, x1:0.028, y1:0.619, "
-                               "x2:1, y2:0.494, stop:0.852273 rgba(0, 0, 0, 250), "
-                               "stop:1 rgba(255, 255, 255, 255));\n"
-                               "}\n"
-                               "#f40:pressed{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "}")
-        self.f40.setText("")
-        self.f40.setObjectName("f40")
-
-        self.g40 = QtWidgets.QPushButton(self.centralwidget)
-        self.g40.setGeometry(QtCore.QRect(200, 30, 31, 111))
-        self.g40.setStyleSheet("#g40{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "background-color: qlineargradient(spread:pad, x1:0.028, y1:0.619, "
-                               "x2:1, y2:0.494, stop:0.852273 rgba(0, 0, 0, 250), "
-                               "stop:1 rgba(255, 255, 255, 255));\n"
-                               "}\n"
-                               "#g40:pressed{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "}")
-        self.g40.setText("")
-        self.g40.setObjectName("g40")
-
-        self.a40 = QtWidgets.QPushButton(self.centralwidget)
-        self.a40.setGeometry(QtCore.QRect(240, 30, 31, 111))
-        self.a40.setStyleSheet("#a40{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "background-color: qlineargradient(spread:pad, x1:0.028, y1:0.619, "
-                               "x2:1, y2:0.494, stop:0.852273 rgba(0, 0, 0, 250), "
-                               "stop:1 rgba(255, 255, 255, 255));\n"
-                               "}\n"
-                               "#a40:pressed{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "}")
-        self.a40.setText("")
-        self.a40.setObjectName("a40")
-
-        self.c50 = QtWidgets.QPushButton(self.centralwidget)
-        self.c50.setGeometry(QtCore.QRect(320, 30, 31, 111))
-        self.c50.setStyleSheet("#c50{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "background-color: qlineargradient(spread:pad, x1:0.028, y1:0.619, "
-                               "x2:1, y2:0.494, stop:0.852273 rgba(0, 0, 0, 250), "
-                               "stop:1 rgba(255, 255, 255, 255));\n"
-                               "}\n"
-                               "#c50:pressed{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "}")
-        self.c50.setText("")
-        self.c50.setObjectName("c50")
-
-        self.d50 = QtWidgets.QPushButton(self.centralwidget)
-        self.d50.setGeometry(QtCore.QRect(360, 30, 31, 111))
-        self.d50.setStyleSheet("#d50{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "background-color: qlineargradient(spread:pad, x1:0.028, y1:0.619, "
-                               "x2:1, y2:0.494, stop:0.852273 rgba(0, 0, 0, 250), "
-                               "stop:1 rgba(255, 255, 255, 255));\n"
-                               "}\n"
-                               "#d50:pressed{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "}")
-        self.d50.setText("")
-        self.d50.setObjectName("d50")
-
-        self.f50 = QtWidgets.QPushButton(self.centralwidget)
-        self.f50.setGeometry(QtCore.QRect(440, 30, 31, 111))
-        self.f50.setStyleSheet("#f50{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "background-color: qlineargradient(spread:pad, x1:0.028, y1:0.619, "
-                               "x2:1, y2:0.494, stop:0.852273 rgba(0, 0, 0, 250), "
-                               "stop:1 rgba(255, 255, 255, 255));\n"
-                               "}\n"
-                               "#f50:pressed{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "}")
-        self.f50.setText("")
-        self.f50.setObjectName("f50")
-
-        self.g50 = QtWidgets.QPushButton(self.centralwidget)
-        self.g50.setGeometry(QtCore.QRect(480, 30, 31, 111))
-        self.g50.setStyleSheet("#g50{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "background-color: qlineargradient(spread:pad, x1:0.028, y1:0.619, "
-                               "x2:1, y2:0.494, stop:0.852273 rgba(0, 0, 0, 250), "
-                               "stop:1 rgba(255, 255, 255, 255));\n"
-                               "}\n"
-                               "#g50:pressed{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "}")
-        self.g50.setText("")
-        self.g50.setObjectName("g50")
-
-        self.a50 = QtWidgets.QPushButton(self.centralwidget)
-        self.a50.setGeometry(QtCore.QRect(520, 30, 31, 111))
-        self.a50.setStyleSheet("#a50{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "background-color: qlineargradient(spread:pad, x1:0.028, y1:0.619, "
-                               "x2:1, y2:0.494, stop:0.852273 rgba(0, 0, 0, 250), "
-                               "stop:1 rgba(255, 255, 255, 255));\n"
-                               "}\n"
-                               "#a50:pressed{\n"
-                               "background-color: rgb(0, 0, 0);\n"
-                               "}")
-        self.a50.setText("")
-        self.a50.setObjectName("a50")
-
-        # Ensure stacking order is correct for black/white keys
-        self.c4.raise_()
-        self.d4.raise_()
-        self.c40.raise_()
-        self.e4.raise_()
-        self.f4.raise_()
-        self.d40.raise_()
-        self.g4.raise_()
-        self.a4.raise_()
-        self.b4.raise_()
-        self.c5.raise_()
-        self.d5.raise_()
-        self.a5.raise_()
-        self.e5.raise_()
-        self.g5.raise_()
-        self.f5.raise_()
-        self.b5.raise_()
-        self.c6.raise_()
-        self.f40.raise_()
-        self.g40.raise_()
-        self.a40.raise_()
-        self.c50.raise_()
-        self.d50.raise_()
-        self.f50.raise_()
-        self.g50.raise_()
-        self.a50.raise_()
-
-        MainWindow.setCentralWidget(self.centralwidget)
-        self.statusbar = QtWidgets.QStatusBar(MainWindow)
-        MainWindow.setStatusBar(self.statusbar)
-
-        self.retranslateUi(MainWindow)
-        QtCore.QMetaObject.connectSlotsByName(MainWindow)
-
-        # Dictionary to hold noteName -> pygame.mixer.Sound
+        # 2) Dictionary to hold {note_name: Sound object}
         self.sounds = {}
 
-        # Connect all keys to the same handler
-        self.c4.clicked.connect(self.play_sound)
-        self.d4.clicked.connect(self.play_sound)
-        self.e4.clicked.connect(self.play_sound)
-        self.f4.clicked.connect(self.play_sound)
-        self.g4.clicked.connect(self.play_sound)
-        self.a4.clicked.connect(self.play_sound)
-        self.b4.clicked.connect(self.play_sound)
-        self.c5.clicked.connect(self.play_sound)
-        self.d5.clicked.connect(self.play_sound)
-        self.e5.clicked.connect(self.play_sound)
-        self.f5.clicked.connect(self.play_sound)
-        self.g5.clicked.connect(self.play_sound)
-        self.a5.clicked.connect(self.play_sound)
-        self.b5.clicked.connect(self.play_sound)
-        self.c6.clicked.connect(self.play_sound)
+        # 3) Detect the screen size
+        screen = QGuiApplication.primaryScreen()
+        screen_geometry = screen.availableGeometry()
+        self.screen_w = screen_geometry.width()
+        self.screen_h = screen_geometry.height()
 
-        self.c40.clicked.connect(self.play_sound)
-        self.d40.clicked.connect(self.play_sound)
-        self.f40.clicked.connect(self.play_sound)
-        self.g40.clicked.connect(self.play_sound)
-        self.a40.clicked.connect(self.play_sound)
-        self.c50.clicked.connect(self.play_sound)
-        self.d50.clicked.connect(self.play_sound)
-        self.f50.clicked.connect(self.play_sound)
-        self.g50.clicked.connect(self.play_sound)
-        self.a50.clicked.connect(self.play_sound)
+        # 4) Resize this window to fill that available screen area
+        #    Or you can do self.showFullScreen() for *true* fullscreen.
+        self.setGeometry(0, 0, self.screen_w, self.screen_h)
 
-    def retranslateUi(self, MainWindow):
-        _translate = QtCore.QCoreApplication.translate
-        MainWindow.setWindowTitle(_translate("MainWindow", "Piano"))
+        # 5) Set up the camera capture
+        #    Attempt to match the screen size for the camera resolution
+        self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # On Windows, CAP_DSHOW sometimes helps
+        if not self.cap.isOpened():
+            print("Warning: Could not open camera.")
+        else:
+            self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.screen_w)
+            self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.screen_h)
 
-        # Optional keyboard shortcuts:
-        self.c4.setShortcut(_translate("MainWindow", "q"))
-        self.c40.setShortcut(_translate("MainWindow", "2"))
-        self.d4.setShortcut(_translate("MainWindow", "w"))
-        self.d40.setShortcut(_translate("MainWindow", "3"))
-        self.e4.setShortcut(_translate("MainWindow", "e"))
-        self.f4.setShortcut(_translate("MainWindow", "r"))
-        self.f40.setShortcut(_translate("MainWindow", "5"))
-        self.g4.setShortcut(_translate("MainWindow", "t"))
-        self.g40.setShortcut(_translate("MainWindow", "6"))
-        self.a4.setShortcut(_translate("MainWindow", "y"))
-        self.a40.setShortcut(_translate("MainWindow", "7"))
-        self.b4.setShortcut(_translate("MainWindow", "u"))
-        self.c5.setShortcut(_translate("MainWindow", "c"))
-        self.d5.setShortcut(_translate("MainWindow", "v"))
-        self.e5.setShortcut(_translate("MainWindow", "b"))
-        self.f5.setShortcut(_translate("MainWindow", "n"))
-        self.g5.setShortcut(_translate("MainWindow", "m"))
-        self.a5.setShortcut(_translate("MainWindow", ","))
-        self.b5.setShortcut(_translate("MainWindow", "."))
-        self.c6.setShortcut(_translate("MainWindow", "/"))
-        self.c50.setShortcut(_translate("MainWindow", "f"))
-        self.d50.setShortcut(_translate("MainWindow", "g"))
-        self.f50.setShortcut(_translate("MainWindow", "j"))
-        self.g50.setShortcut(_translate("MainWindow", "k"))
-        self.a50.setShortcut(_translate("MainWindow", "l"))
+        # 6) Create a label to show the camera feed
+        self.camera_label = QLabel(self)
+        self.camera_label.setGeometry(0, 0, self.screen_w, self.screen_h)
+        self.camera_label.setStyleSheet("background-color: black;")
+
+        # 7) Load your .wav files
+        self.load_sounds()
+
+        # 8) Create the piano keys, sized/positioned proportionally
+        self.create_white_keys()
+        self.create_black_keys()
+
+        # 9) Optional status bar
+        self.setStatusBar(QStatusBar(self))
+
+        # 10) QTimer to grab camera frames
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.update_camera)
+        self.timer.start(30)  # ~30 FPS
 
     def load_sounds(self):
         """
-        Load each note as a pygame.mixer.Sound object.
-        Each button's objectName() must match these filenames.
+        Load .wav files into pygame.mixer.Sound.
+        Make sure these files exist at C:/Users/LLR User/Desktop/music/Sounds/.
         """
-        base_path = "C:/Users/LLR User/Desktop/music/Sounds/"  # Adjust if needed
+        base = "C:/Users/LLR User/Desktop/music/Sounds/"
 
-        # White keys
-        self.sounds["c4"] = pygame.mixer.Sound(base_path + "c4.wav")
-        self.sounds["d4"] = pygame.mixer.Sound(base_path + "d4.wav")
-        self.sounds["e4"] = pygame.mixer.Sound(base_path + "e4.wav")
-        self.sounds["f4"] = pygame.mixer.Sound(base_path + "f4.wav")
-        self.sounds["g4"] = pygame.mixer.Sound(base_path + "g4.wav")
-        self.sounds["a4"] = pygame.mixer.Sound(base_path + "a4.wav")
-        self.sounds["b4"] = pygame.mixer.Sound(base_path + "b4.wav")
-        self.sounds["c5"] = pygame.mixer.Sound(base_path + "c5.wav")
-        self.sounds["d5"] = pygame.mixer.Sound(base_path + "d5.wav")
-        self.sounds["e5"] = pygame.mixer.Sound(base_path + "e5.wav")
-        self.sounds["f5"] = pygame.mixer.Sound(base_path + "f5.wav")
-        self.sounds["g5"] = pygame.mixer.Sound(base_path + "g5.wav")
-        self.sounds["a5"] = pygame.mixer.Sound(base_path + "a5.wav")
-        self.sounds["b5"] = pygame.mixer.Sound(base_path + "b5.wav")
-        self.sounds["c6"] = pygame.mixer.Sound(base_path + "c6.wav")
+        # A subset of notes—adjust as you have .wav files
+        white_notes = ["c4","d4","e4","f4","g4","a4","b4","c5","d5","e5","f5","g5","a5","b5"]
+        black_notes = ["c40","d40","f40","g40","a40","c50","d50","f50","g50","a50"]
 
-        # Black keys
-        self.sounds["c40"] = pygame.mixer.Sound(base_path + "c40.wav")
-        self.sounds["d40"] = pygame.mixer.Sound(base_path + "d40.wav")
-        self.sounds["f40"] = pygame.mixer.Sound(base_path + "f40.wav")
-        self.sounds["g40"] = pygame.mixer.Sound(base_path + "g40.wav")
-        self.sounds["a40"] = pygame.mixer.Sound(base_path + "a40.wav")
-        self.sounds["c50"] = pygame.mixer.Sound(base_path + "c50.wav")
-        self.sounds["d50"] = pygame.mixer.Sound(base_path + "d50.wav")
-        self.sounds["f50"] = pygame.mixer.Sound(base_path + "f50.wav")
-        self.sounds["g50"] = pygame.mixer.Sound(base_path + "g50.wav")
-        self.sounds["a50"] = pygame.mixer.Sound(base_path + "a50.wav")
+        for note in white_notes + black_notes:
+            self.sounds[note] = pygame.mixer.Sound(base + f"{note}.wav")
+
+    def create_white_keys(self):
+        """
+        Create a row of white keys, sized and positioned proportionally to screen size.
+        We'll place them near the bottom, centered horizontally.
+        """
+        white_keys = [
+            ("c4", "Q"), ("d4", "W"), ("e4", "E"), ("f4", "R"),
+            ("g4", "T"), ("a4", "Y"), ("b4", "U"),
+            ("c5", "I"), ("d5", "O"), ("e5", "P"), ("f5", "["),
+            ("g5", "]"), ("a5", "\\"), ("b5", "1")
+        ]
+
+        num_white = len(white_keys)
+        # We'll define a fraction of screen width for each key
+        key_w = self.screen_w / 20.0  # adjust as you like
+        key_h = self.screen_h / 4.0   # e.g. 25% of screen height
+        total_width = num_white * key_w
+
+        # Center them horizontally
+        x_start = (self.screen_w - total_width) / 2
+        # Place them near the bottom with a 5% margin
+        margin_bottom = self.screen_h * 0.05
+        y_pos = self.screen_h - key_h - margin_bottom
+
+        for i, (note_name, shortcut) in enumerate(white_keys):
+            x = x_start + i * key_w
+            btn = QPushButton(note_name.upper(), self)
+            btn.setObjectName(note_name)
+            btn.setShortcut(shortcut)
+            btn.setGeometry(QRect(int(x), int(y_pos), int(key_w), int(key_h)))
+            btn.setStyleSheet("""
+                background-color: rgba(255, 255, 255, 200);
+                font-weight: bold;
+                font-size: 18px;
+            """)
+            btn.clicked.connect(self.play_sound)
+
+    def create_black_keys(self):
+        """
+        Create black keys in between the white keys, proportionally.
+        For 10 black keys: c40, d40, f40, g40, a40, c50, d50, f50, g50, a50
+        We'll approximate positions similarly.
+        """
+        black_keys = [
+            ("c40", "2"), ("d40", "3"), ("f40", "5"), ("g40", "6"), ("a40", "7"),
+            ("c50", "8"), ("d50", "9"), ("f50", "0"), ("g50", "-"), ("a50", "=")
+        ]
+
+        # We'll base black key widths on ~60% of white key width
+        white_key_w = self.screen_w / 20.0
+        black_key_w = white_key_w * 0.6
+        black_key_h = self.screen_h / 5.0  # a bit shorter
+
+        # We need the same x_start from create_white_keys
+        # Let's just recalc quickly:
+        num_white = 14
+        total_white_w = num_white * white_key_w
+        x_white_start = (self.screen_w - total_white_w) / 2
+        margin_bottom = self.screen_h * 0.05
+        y_white_pos = self.screen_h - (self.screen_h / 4.0) - margin_bottom
+        # black keys will be placed slightly above that
+        y_black_pos = y_white_pos
+
+        # Approx offsets for black keys between white keys
+        # Adjust these to visually place black keys in correct spots
+        black_offsets = [
+            white_key_w * 0.7,   # c40
+            white_key_w * 1.7,   # d40
+            white_key_w * 3.7,   # f40
+            white_key_w * 4.7,   # g40
+            white_key_w * 5.7,   # a40
+            white_key_w * 7.7,   # c50
+            white_key_w * 8.7,   # d50
+            white_key_w * 10.7,  # f50
+            white_key_w * 11.7,  # g50
+            white_key_w * 12.7,  # a50
+        ]
+
+        for i, (note_name, shortcut) in enumerate(black_keys):
+            x = x_white_start + black_offsets[i]
+            btn = QPushButton(note_name.upper(), self)
+            btn.setObjectName(note_name)
+            btn.setShortcut(shortcut)
+            btn.setGeometry(QRect(int(x), int(y_black_pos), int(black_key_w), int(black_key_h)))
+            btn.setStyleSheet("""
+                background-color: rgba(0, 0, 0, 220);
+                color: white;
+                font-weight: bold;
+                font-size: 16px;
+            """)
+            btn.clicked.connect(self.play_sound)
 
     def play_sound(self):
-        """
-        Called when a note button is clicked.
-        We'll figure out which button was clicked
-        and play the associated sound.
-        """
-        note_name = self.mw.sender().objectName()  # e.g. "c4", "d4", "c40"
+        """Called when a piano key is clicked or its shortcut pressed."""
+        note_name = self.sender().objectName()
         if note_name in self.sounds:
             self.sounds[note_name].play()
 
+    def update_camera(self):
+        """
+        Grabs a frame from the webcam, converts it to QPixmap,
+        and STRETCHES it to fill the entire window.
+        """
+        ret, frame = self.cap.read()
+        if not ret:
+            return
+
+        # Convert BGR -> RGB
+        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        h, w, ch = frame_rgb.shape
+        bytes_per_line = ch * w
+
+        # Convert to QImage -> QPixmap
+        qt_img = QImage(frame_rgb.data, w, h, bytes_per_line, QImage.Format_RGB888)
+        pixmap = QPixmap.fromImage(qt_img)
+
+        # SCALE to fill the entire camera_label area, ignoring aspect ratio
+        pixmap = pixmap.scaled(
+            self.camera_label.width(),
+            self.camera_label.height(),
+            Qt.IgnoreAspectRatio,        # <--- Fill exactly, no letterbox
+            Qt.SmoothTransformation
+        )
+        self.camera_label.setPixmap(pixmap)
+
+    def closeEvent(self, event):
+        """
+        Cleanup camera and quit pygame on close.
+        """
+        if self.cap.isOpened():
+            self.cap.release()
+        pygame.quit()
+        super().closeEvent(event)
 
 def main():
-    # 1. Initialize Pygame (including the audio mixer)
-    pygame.init()
-    pygame.mixer.init()
-
-    # 2. Create the PyQt application
-    app = QtWidgets.QApplication(sys.argv)
-    MainWindow = QtWidgets.QMainWindow()
-
-    # 3. Set up the UI
-    ui = Ui_MainWindow()
-    ui.setupUi(MainWindow)
-
-    # 4. Load all the .wav files into Pygame mixer
-    ui.load_sounds()
-
-    # 5. Show the window and start the Qt event loop
-    MainWindow.show()
+    app = QApplication(sys.argv)
+    window = ARPiano()
+    window.show()
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     main()
