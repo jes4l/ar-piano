@@ -2,106 +2,164 @@ import sys
 import cv2
 import mediapipe as mp
 import pygame
+import random
+import math
 
-from PyQt5.QtGui import QImage, QPixmap, QGuiApplication, QPainter, QPen, QColor
+from PyQt5.QtGui import (
+    QImage, QPixmap, QGuiApplication, QPainter, QPen, QColor
+)
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QStatusBar
 )
 from PyQt5.QtCore import QTimer, QRect, Qt, QPoint
 
-
 class SkeletonOverlay(QLabel):
     """
-    A transparent overlay widget that draws the hand skeleton on top of everything.
-    Stores skeleton lines and points from the main ARPiano class and paints them here.
+    A transparent overlay widget that draws the hand skeleton on top of everything (piano + camera).
     """
     def __init__(self, parent, width, height):
         super().__init__(parent)
         self.setGeometry(0, 0, width, height)
         self.setStyleSheet("background: transparent;")
-        # Allow mouse events to pass through to underlying widgets
+        # Let mouse events pass through
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.skeleton_data = []  # List of line segments: [((x1,y1),(x2,y2)), ...]
-        self.points_data = []    # List of landmark points: [(px, py), ...]
+
+        self.skeleton_data = []  # line segments: [((x1, y1), (x2, y2)), ...]
+        self.points_data = []    # landmark points: [(x, y), ...]
 
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Draw skeleton connections as green lines
-        pen_line = QPen(QColor(0, 255, 0, 200), 3)  # Semi-transparent green
+        # Draw skeleton connections (green lines)
+        pen_line = QPen(QColor(0, 255, 0, 200), 3)
         painter.setPen(pen_line)
         for line in self.skeleton_data:
             (x1, y1), (x2, y2) = line
             painter.drawLine(QPoint(x1, y1), QPoint(x2, y2))
 
-        # Draw landmark points as green circles
-        pen_points = QPen(QColor(0, 255, 0, 200), 6)  # Semi-transparent green
+        # Draw landmark points (green circles)
+        pen_points = QPen(QColor(0, 255, 0, 200), 6)
         painter.setPen(pen_points)
         for (px, py) in self.points_data:
             painter.drawPoint(QPoint(px, py))
 
 
+class FlyingNote(QLabel):
+    """
+    A QLabel that displays a random note image and smoothly moves in a random direction,
+    then destroys itself after 1 second.
+    """
+    def __init__(self, parent, pixmap, start_x, start_y):
+        super().__init__(parent)
+        self.setStyleSheet("background: transparent;")
+        self.setPixmap(pixmap)
+        self.move(start_x, start_y)
+        self.show()
+
+        # Keep track of time
+        self.lifetime_ms = 1000  # 1 second
+        self.elapsed_ms = 0
+
+        # Random velocity
+        angle = random.uniform(0, 2 * math.pi)
+        speed = random.uniform(1.0, 3.0)  # pixels per update
+        self.vx = speed * math.cos(angle)
+        self.vy = speed * math.sin(angle)
+
+        # Timer for movement updates (about ~30 fps => 33ms)
+        self.update_timer = QTimer()
+        self.update_timer.timeout.connect(self.update_position)
+        self.update_timer.start(33)
+
+    def update_position(self):
+        self.elapsed_ms += 33
+        if self.elapsed_ms >= self.lifetime_ms:
+            # Time to destroy
+            self.update_timer.stop()
+            self.deleteLater()
+            return
+
+        # Move by velocity
+        x = self.x() + self.vx
+        y = self.y() + self.vy
+        self.move(int(x), int(y))
+
+
+class EffectOverlay(QLabel):
+    """
+    Another transparent overlay widget that sits on top of everything (including skeleton).
+    Used to host FlyingNote labels so they appear above all other widgets.
+    """
+    def __init__(self, parent, width, height):
+        super().__init__(parent)
+        self.setGeometry(0, 0, width, height)
+        self.setStyleSheet("background: transparent;")
+        # Also pass mouse events through
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+
+
 class ARPiano(QMainWindow):
     """
-    A PyQt5 window that:
-      - Displays a stretched camera feed in the background.
-      - Overlays a larger, visually appealing piano keyboard positioned slightly higher.
-      - Uses MediaPipe to track specific fingertips and plays notes when they touch keys.
-      - Draws the hand skeleton in a transparent overlay above the keys.
+    AR Piano that:
+    - Shows webcam feed in the background.
+    - Overlays piano keys near the bottom.
+    - Tracks fingertips (index, middle, ring, pinky) with MediaPipe for note triggers.
+    - Draws skeleton with a SkeletonOverlay.
+    - Spawns FlyingNote objects in an EffectOverlay on top, which move & vanish after 1s.
     """
 
-    # Fingertip and PIP indices in MediaPipe for index, middle, ring, and pinky fingers
-    FINGER_TIPS =  [8, 12, 16, 20]
+    # Fingertips & PIPs
+    FINGER_TIPS =  [8, 12, 16, 20]   # index, middle, ring, pinky
     FINGER_PIPS =  [6, 10, 14, 18]
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AR Piano + Smaller Black Keys + Finger Extension Only")
+        self.setWindowTitle("AR Piano + Flying Notes")
 
-        # 1) Initialize pygame mixer for audio playback
+        # 1) Initialize Pygame mixer
         pygame.init()
         pygame.mixer.init()
 
-        # 2) Dictionary to hold {note_name: Sound object}
+        # 2) Dict for {note_name: Sound}
         self.sounds = {}
 
         # 3) Detect screen size
         screen = QGuiApplication.primaryScreen()
-        rect = screen.availableGeometry()
-        self.screen_w = rect.width()
-        self.screen_h = rect.height()
+        geometry = screen.availableGeometry()
+        self.screen_w = geometry.width()
+        self.screen_h = geometry.height()
 
-        # 4) Set window geometry to fill the screen
+        # 4) Fill window
         self.setGeometry(0, 0, self.screen_w, self.screen_h)
 
-        # 5) Initialize camera capture (webcam)
-        self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)  # Use CAP_DSHOW on Windows for better performance
+        # 5) Camera
+        self.cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
         if not self.cap.isOpened():
             print("Warning: Could not open camera.")
         else:
-            # Attempt to set camera resolution to match screen size
             self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.screen_w)
             self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.screen_h)
 
-        # 6) Create a QLabel to display the camera feed
+        # 6) Label for camera
         self.camera_label = QLabel(self)
         self.camera_label.setGeometry(0, 0, self.screen_w, self.screen_h)
         self.camera_label.setStyleSheet("background-color: black;")
 
-        # 7) Load .wav sound files into pygame mixer
+        # 7) Load sounds & note images
         self.load_sounds()
+        self.load_note_images()
 
-        # 8) Create piano keys (white and black), stored for collision detection
+        # 8) Piano keys
         self.keys_info = []
         self.create_white_keys()
         self.create_black_keys()
 
-        # 9) Optional: Add a status bar (can be used for debugging or status messages)
+        # 9) Status bar
         self.setStatusBar(QStatusBar(self))
 
-        # 10) Initialize MediaPipe Hands for hand tracking
+        # 10) MediaPipe hands
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
@@ -111,48 +169,48 @@ class ARPiano(QMainWindow):
         )
         self.HAND_CONNECTIONS = self.mp_hands.HAND_CONNECTIONS
 
-        # 11) Debounce mechanism: Track active notes to prevent repeated triggering
+        # 11) Debounce set
         self.active_notes = set()
 
-        # 12) Create a SkeletonOverlay to draw hand skeletons above all widgets
-        self.overlay_label = SkeletonOverlay(self, self.screen_w, self.screen_h)
-        self.overlay_label.show()
+        # 12) Skeleton overlay
+        self.skeleton_overlay = SkeletonOverlay(self, self.screen_w, self.screen_h)
+        self.skeleton_overlay.show()
 
-        # 13) Set up a QTimer to periodically grab frames from the camera
+        # 13) Effects overlay (on top of skeleton)
+        self.effects_overlay = EffectOverlay(self, self.screen_w, self.screen_h)
+        self.effects_overlay.raise_()  # ensure it's on top
+        self.effects_overlay.show()
+
+        # 14) Timer for camera updates
         self.timer = QTimer()
         self.timer.timeout.connect(self.update_camera)
-        self.timer.start(30)  # Approximately 30 FPS
+        self.timer.start(30)
 
     def load_sounds(self):
-        """
-        Load .wav files into pygame.mixer.Sound objects.
-        Ensure that the files are located at:
-        C:/Users/LLR User/Desktop/music/Sounds/
-        """
         base = "C:/Users/LLR User/Desktop/music/Sounds/"
-
-        # List of white and black note filenames (without extension)
         white_notes = ["c4","d4","e4","f4","g4","a4","b4","c5","d5","e5","f5","g5","a5","b5"]
         black_notes = ["c40","d40","f40","g40","a40","c50","d50","f50","g50","a50"]
 
-        # Load white notes
-        for note in white_notes:
+        for note in white_notes + black_notes:
             try:
                 self.sounds[note] = pygame.mixer.Sound(base + f"{note}.wav")
             except pygame.error:
-                print(f"Error loading sound file: {base}{note}.wav")
+                print(f"Could not load sound: {note}.wav")
 
-        # Load black notes
-        for note in black_notes:
-            try:
-                self.sounds[note] = pygame.mixer.Sound(base + f"{note}.wav")
-            except pygame.error:
-                print(f"Error loading sound file: {base}{note}.wav")
+    def load_note_images(self):
+        """
+        Load Assets/note1.png..note5.png into a list.
+        """
+        self.notePixmaps = []
+        for i in range(1, 6):
+            path = f"Assets/note{i}.png"
+            pix = QPixmap(path)
+            if not pix.isNull():
+                self.notePixmaps.append(pix)
+            else:
+                print(f"Warning: Could not load {path}")
 
     def create_white_keys(self):
-        """
-        Create a row of larger white keys, positioned slightly higher on the screen.
-        """
         white_keys = [
             ("c4", "Q"), ("d4", "W"), ("e4", "E"), ("f4", "R"),
             ("g4", "T"), ("a4", "Y"), ("b4", "U"),
@@ -160,15 +218,11 @@ class ARPiano(QMainWindow):
             ("g5", "]"), ("a5", "\\"), ("b5", "1")
         ]
         num_white = len(white_keys)
-
-        # Define key dimensions (make them larger)
-        key_w = self.screen_w / 15.0  # Wider than previous
-        key_h = self.screen_h / 3.0   # Taller than previous
-
+        key_w = self.screen_w / 15.0
+        key_h = self.screen_h / 3.0
         total_w = num_white * key_w
         x_start = (self.screen_w - total_w) / 2
 
-        # Position keys slightly higher from the bottom (20% margin)
         margin_bottom = self.screen_h * 0.20
         y_pos = self.screen_h - key_h - margin_bottom
 
@@ -188,33 +242,27 @@ class ARPiano(QMainWindow):
             self.keys_info.append((btn, note_name))
 
     def create_black_keys(self):
-        """
-        Create black keys slightly smaller in height and width, positioned above the white keys.
-        """
         black_keys = [
             ("c40", "2"), ("d40", "3"), ("f40", "5"), ("g40", "6"), ("a40", "7"),
             ("c50", "8"), ("d50", "9"), ("f50", "0"), ("g50", "-"), ("a50", "=")
         ]
-
         white_key_w = self.screen_w / 15.0
-        black_key_w = white_key_w * 0.5  # Slightly smaller than before
-        black_key_h = self.screen_h / 4.5  # Reduced height
+        black_key_w = white_key_w * 0.5
+        black_key_h = self.screen_h / 4.5
 
         num_white = 14
         total_white_w = num_white * white_key_w
         x_white_start = (self.screen_w - total_white_w) / 2
         margin_bottom = self.screen_h * 0.20
         y_white_pos = self.screen_h - (self.screen_h / 3.0) - margin_bottom
-        y_black_pos = y_white_pos  # Align top with white keys
+        y_black_pos = y_white_pos
 
-        # Offsets to position black keys between specific white keys
         offsets = [
             white_key_w*0.7,  white_key_w*1.7,  white_key_w*3.7,
             white_key_w*4.7,  white_key_w*5.7,  white_key_w*7.7,
             white_key_w*8.7,  white_key_w*10.7, white_key_w*11.7,
             white_key_w*12.7,
         ]
-
         for i, (note_name, shortcut) in enumerate(black_keys):
             x = x_white_start + offsets[i]
             btn = QPushButton(note_name.upper(), self)
@@ -232,124 +280,133 @@ class ARPiano(QMainWindow):
             self.keys_info.append((btn, note_name))
 
     def play_sound(self):
-        """
-        Play the sound associated with the piano key when clicked or triggered by finger touch.
-        """
+        # Called when key is clicked
         note_name = self.sender().objectName()
+        self.trigger_note_by_name(note_name)
+
+    def trigger_note_by_name(self, note_name):
+        # Plays note & spawns flying note
         if note_name in self.sounds:
             self.sounds[note_name].play()
 
-    def trigger_note_by_name(self, note_name):
+        # Find button geometry
+        for (btn, name) in self.keys_info:
+            if name == note_name:
+                self.spawnFlyingNote(btn)
+                break
+
+    def spawnFlyingNote(self, btn):
         """
-        Directly play a note by its name (used for fingertip-triggered notes).
+        Creates a random note image, scaled randomly, and places a FlyingNote
+        in the effects_overlay. The note label moves in a random direction, then vanishes.
         """
-        if note_name in self.sounds:
-            self.sounds[note_name].play()
+        if not self.notePixmaps:
+            return
+        pix_original = random.choice(self.notePixmaps)
+
+        # random scale
+        scale_factor = random.uniform(0.5, 1.2)
+        scaled_w = int(pix_original.width() * scale_factor)
+        scaled_h = int(pix_original.height() * scale_factor)
+        pix_scaled = pix_original.scaled(scaled_w, scaled_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+
+        # position near the button center
+        rect = btn.geometry()
+        center_x = rect.x() + rect.width()//2
+        center_y = rect.y() + rect.height()//2
+
+        # random offset
+        off_x = random.randint(-rect.width()//2, rect.width()//2)
+        off_y = random.randint(-rect.height()//2, rect.height()//2)
+        start_x = center_x + off_x - scaled_w//2
+        start_y = center_y + off_y - scaled_h//2
+
+        # Create a flying note label inside the effects_overlay
+        note_label = FlyingNote(self.effects_overlay, pix_scaled, start_x, start_y)
+        # The note_label raises itself automatically, but let's ensure overlay is on top
+        self.effects_overlay.raise_()
 
     def update_camera(self):
         """
-        Update the camera feed, process hand landmarks, detect finger touches on keys,
-        and draw the hand skeleton overlay.
+        Grab frame, flip horizontally, process with MediaPipe, do skeleton + fingertip collision.
+        Update skeleton overlay. Show feed in camera_label.
         """
         ret, frame = self.cap.read()
         if not ret:
             return
 
-        # Flip the frame horizontally for a mirror effect
         frame = cv2.flip(frame, 1)
-
-        # Convert BGR to RGB for MediaPipe
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         h, w, _ = frame_rgb.shape
 
-        # Process the frame with MediaPipe Hands
         results = self.hands.process(frame_rgb)
 
-        # Initialize lists for skeleton data
         all_lines = []
         all_points = []
-
-        # Set to keep track of currently touched notes
         current_touches = set()
 
         if results.multi_hand_landmarks:
             for hand_landmarks in results.multi_hand_landmarks:
-                # Extract landmark coordinates
+                # Convert landmarks to pixel coords
                 pts = []
                 for lm in hand_landmarks.landmark:
                     px = int(lm.x * w)
                     py = int(lm.y * h)
                     pts.append((px, py))
 
-                # Draw skeleton lines by connecting landmarks
+                # Build skeleton lines
                 for (start_idx, end_idx) in self.HAND_CONNECTIONS:
-                    (sx, sy) = pts[start_idx]
-                    (ex, ey) = pts[end_idx]
+                    sx, sy = pts[start_idx]
+                    ex, ey = pts[end_idx]
                     all_lines.append([(sx, sy), (ex, ey)])
-
-                # Store landmark points
                 all_points.extend(pts)
 
-                # Check each relevant fingertip for extension and collision with keys
+                # Fingertip collision if extended
                 for tip_idx, pip_idx in zip(self.FINGER_TIPS, self.FINGER_PIPS):
                     tip_x, tip_y = pts[tip_idx]
                     pip_x, pip_y = pts[pip_idx]
-
-                    # Determine if the finger is extended
-                    if tip_y < pip_y:
-                        # Only check for collision if finger is extended
+                    if tip_y < pip_y:  # extended
+                        # Collision check
                         for (btn, note_name) in self.keys_info:
                             rect = btn.geometry()
                             if (rect.left() <= tip_x <= rect.right() and
                                 rect.top() <= tip_y <= rect.bottom()):
                                 current_touches.add(note_name)
 
-        # Debounce: Play notes only when newly touched
+        # Debounce
         newly_pressed = current_touches - self.active_notes
         for note in newly_pressed:
             self.trigger_note_by_name(note)
 
-        # Update the set of active notes
         self.active_notes = current_touches
 
-        # Update skeleton data in the overlay
-        self.overlay_label.skeleton_data = all_lines
-        self.overlay_label.points_data = all_points
-        self.overlay_label.update()
+        # Update skeleton overlay
+        self.skeleton_overlay.skeleton_data = all_lines
+        self.skeleton_overlay.points_data = all_points
+        self.skeleton_overlay.update()
 
-        # Convert RGB frame back to BGR for display
+        # Show camera feed
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
-
-        # Convert to QImage and then to QPixmap
         qt_img = QImage(frame_bgr.data, w, h, w*3, QImage.Format_BGR888)
         pixmap = QPixmap.fromImage(qt_img)
-
-        # Stretch the pixmap to fill the camera_label, ignoring aspect ratio
-        pixmap = pixmap.scaled(
-            self.camera_label.width(),
-            self.camera_label.height(),
-            Qt.IgnoreAspectRatio,
-            Qt.SmoothTransformation
-        )
+        pixmap = pixmap.scaled(self.camera_label.width(),
+                               self.camera_label.height(),
+                               Qt.IgnoreAspectRatio,
+                               Qt.SmoothTransformation)
         self.camera_label.setPixmap(pixmap)
 
     def closeEvent(self, event):
-        """
-        Cleanup resources when the window is closed.
-        """
         if self.cap.isOpened():
             self.cap.release()
         self.hands.close()
         pygame.quit()
         super().closeEvent(event)
 
-
 def main():
     app = QApplication(sys.argv)
     window = ARPiano()
     window.show()
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     main()
