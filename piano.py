@@ -32,15 +32,15 @@ class SkeletonOverlay(QLabel):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Draw skeleton connections (green lines)
-        pen_line = QPen(QColor(0, 255, 0, 200), 3)
+        # Draw skeleton connections (white lines)
+        pen_line = QPen(QColor(255, 255, 255, 200), 3)
         painter.setPen(pen_line)
         for line in self.skeleton_data:
             (x1, y1), (x2, y2) = line
             painter.drawLine(QPoint(x1, y1), QPoint(x2, y2))
 
-        # Draw landmark points (green circles)
-        pen_points = QPen(QColor(0, 255, 0, 200), 6)
+        # Draw landmark points (red circles)
+        pen_points = QPen(QColor(255, 0, 0, 200), 6)
         painter.setPen(pen_points)
         for (px, py) in self.points_data:
             painter.drawPoint(QPoint(px, py))
