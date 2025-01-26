@@ -274,7 +274,7 @@ class ARPiano(QMainWindow):
         self.auto_play_muted=False
         self.createTeachToggleButton()
 
-        self.show_notes=True
+        self.show_notes=False  # Initialize as False to hide notes by default
         self.createShowNotesToggleButton()
 
         self.score=0
@@ -338,7 +338,7 @@ class ARPiano(QMainWindow):
                 font-size:24px;
             """)
             btn.clicked.connect(self.play_sound)
-            self.keys_info.append((btn,note_name))
+            self.keys_info.append((btn,nm:=note_name))
 
     def create_black_keys(self):
         black_keys=[
@@ -375,7 +375,7 @@ class ARPiano(QMainWindow):
                 font-size:20px;
             """)
             btn.clicked.connect(self.play_sound)
-            self.keys_info.append((btn,note_name))
+            self.keys_info.append((btn,nm:=note_name))
 
     def createTeachToggleButton(self):
         btn_w,btn_h=200,30
@@ -399,9 +399,9 @@ class ARPiano(QMainWindow):
         padding_right=20
         shift_right=10
         x_pos=self.piano_x_start+self.piano_total_w-btn_w-padding_right+shift_right
-        y_buttons=int(0.82*self.screen_h)+50
+        y_buttons=int(0.82*self.screen_h)+50  # Adjusted to prevent overlap
 
-        self.showNotesButton=QPushButton("Show Notes: ON",self)
+        self.showNotesButton=QPushButton("Show Notes: OFF",self)  # Initialize as OFF
         self.showNotesButton.setGeometry(int(x_pos),int(y_buttons),btn_w,btn_h)
         self.showNotesButton.setStyleSheet("""
             background-color:rgba(200,200,200,200);
@@ -409,7 +409,11 @@ class ARPiano(QMainWindow):
             font-weight:bold;
         """)
         self.showNotesButton.clicked.connect(self.toggleShowNotes)
-        self.show_notes=True
+        self.show_notes=False  # Set to False to hide notes by default
+
+        # Hide the note labels on piano keys
+        for (btn, nm) in self.keys_info:
+            btn.setText("")
 
     def toggleTeach(self):
         self.auto_play_muted=not self.auto_play_muted
@@ -424,7 +428,7 @@ class ARPiano(QMainWindow):
             self.showNotesButton.setText("Show Notes: ON")
         else:
             self.showNotesButton.setText("Show Notes: OFF")
-        for(btn,nm) in self.keys_info:
+        for (btn, nm) in self.keys_info:
             if self.show_notes:
                 btn.setText(nm.upper())
             else:
@@ -501,9 +505,8 @@ class ARPiano(QMainWindow):
         # If user pressed the note manually and teach is OFF => collisions scoring
         if (not from_tile) and self.auto_play_muted:
             if len(self.collisions)==0:
-                # no collisions => no penalty or if you want -5 => we do -5 if you want any random note is "incorrect"
-                # We'll do no penalty here. Or let's do a small penalty:
-                self.addScore(-5)  # if you want penalty for random playing
+                # No active collisions; penalize for random playing
+                self.addScore(-5)
                 return
             # Check if user hit a note that is in collisions
             if note_name in self.collisions:
@@ -512,25 +515,25 @@ class ARPiano(QMainWindow):
                     # +10
                     self.addScore(10)
                 else:
-                    # expired => -5
+                    # Expired => -5
                     self.addScore(-5)
-                # remove collision => only one outcome
+                # Remove collision => only one outcome
                 del self.collisions[note_name]
             else:
-                # user tried a note not in collisions => -5
+                # User tried a note not in collisions => -5
                 self.addScore(-5)
-                # also no further outcome => done
+                # Also no further outcome => done
 
         # If from_tile & auto_play_muted => no sound => done
         # If from_tile & not teach => sound done => done
         # If not from_tile & teach => we handled collisions
         # If not from_tile & not teach => normal sound
         if (not from_tile) and (not self.auto_play_muted):
-            # normal
+            # Normal sound
             if note_name in self.sounds:
                 self.sounds[note_name].play()
 
-        # spawn flying note
+        # Spawn flying note
         for(btn,nm) in self.keys_info:
             if nm==note_name:
                 self.spawnFlyingNote(btn)
@@ -538,8 +541,8 @@ class ARPiano(QMainWindow):
 
     def addScore(self, points):
         self.score+=points
-        # clamp
-        if self.score<0:
+        # Clamp score to not go below 0
+        if self.score < 0:
             self.score=0
         self.scoreLabel.setText(f"Score: {self.score}")
 
@@ -599,11 +602,11 @@ class ARPiano(QMainWindow):
                 for tip_idx,pip_idx in zip(self.FINGER_TIPS,self.FINGER_PIPS):
                     tip_x,tip_y=pts[tip_idx]
                     pip_x,pip_y=pts[pip_idx]
-                    if tip_y<pip_y:
+                    if tip_y < pip_y:
                         for(btn,nm) in self.keys_info:
                             r=btn.geometry()
-                            if (r.left()<=tip_x<=r.right() and
-                                r.top()<=tip_y<=r.bottom()):
+                            if (r.left() <= tip_x <= r.right() and
+                                r.top() <= tip_y <= r.bottom()):
                                 touched_now.add(nm)
 
         for (btn,nm) in self.keys_info:
@@ -615,13 +618,13 @@ class ARPiano(QMainWindow):
                 if self.is_held[nm]:
                     self.is_held[nm]=False
 
-        # handle missed => -2 for collisions older than 500ms
+        # Handle missed => -2 for collisions older than 500ms
         if self.auto_play_muted:
             current_ms=int(time.time()*1000)
             to_remove=[]
             for note_name, ctime in self.collisions.items():
-                if current_ms-ctime>self.tile_score_window_ms:
-                    # user never triggered => missed => -2
+                if current_ms-ctime > self.tile_score_window_ms:
+                    # User never triggered => missed => -2
                     self.addScore(-2)
                     to_remove.append(note_name)
             for n in to_remove:
