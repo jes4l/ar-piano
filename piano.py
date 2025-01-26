@@ -149,10 +149,11 @@ class FallingTile(QLabel):
 
         # Collisions-based scoring if Teach OFF
         if self.piano.auto_play_muted:
-            if (self.note_name not in self.piano.collisions):
+            # Modified to handle list of collisions
+            if not any(c['note_name'] == self.note_name for c in self.piano.collisions):
                 if tile_bottom >= key_top - self.margin_close:
                     now_ms = int(time.time() * 1000)
-                    self.piano.collisions[self.note_name] = now_ms
+                    self.piano.collisions.append({'note_name': self.note_name, 'ctime': now_ms})
 
         # If tile hits the key
         if tile_bottom >= key_top:
@@ -229,7 +230,11 @@ class ARPiano(QMainWindow):
         pygame.init()
         pygame.mixer.init()
 
-        self.collisions = {}
+        # *** MODIFICATION START ***
+        # Initialize collisions as a list to handle multiple simultaneous collisions
+        self.collisions = []  # List of dicts with 'note_name' and 'ctime'
+        # *** MODIFICATION END ***
+
         self.tile_score_window_ms = 500
 
         # tempo factor start at 1.25 => medium
@@ -422,6 +427,7 @@ class ARPiano(QMainWindow):
 
     def createTeachToggleButton(self):
         """
+        Teach Toggle:
         Teach ON => auto-play, tile collisions produce sound
         Teach OFF => collisions => no sound from collisions, user can press keys to produce sound
         """
@@ -439,7 +445,7 @@ class ARPiano(QMainWindow):
             font-weight: bold;
         """)
         self.teachButton.clicked.connect(self.toggleTeach)
-        self.auto_play_muted = False  # OFF => collisions, but we start with ON => no collisions
+        self.auto_play_muted = False  # Teach ON => normal auto-play
 
     def createShowNotesToggleButton(self):
         btn_w, btn_h = 200, 30
@@ -511,17 +517,17 @@ class ARPiano(QMainWindow):
             b = int(c1[2] + (c2[2]-c1[2])*t)
             return (r,g,b)
 
-        if frac<0.5:
-            subFrac=frac*2.0
-            c=color_interpolate(green, orange, subFrac)
+        if frac < 0.5:
+            subFrac = frac * 2.0
+            c = color_interpolate(green, orange, subFrac)
         else:
-            subFrac=(frac-0.5)*2.0
-            c=color_interpolate(orange, red, subFrac)
+            subFrac = (frac - 0.5) * 2.0
+            c = color_interpolate(orange, red, subFrac)
 
         def rgb_to_hex(c):
             return "#{:02x}{:02x}{:02x}".format(c[0], c[1], c[2])
 
-        color_hex=rgb_to_hex(c)
+        color_hex = rgb_to_hex(c)
 
         style = f"""
             QSlider::groove:horizontal {{
@@ -614,54 +620,51 @@ class ARPiano(QMainWindow):
 
     def trigger_note_by_name(self, note_name, from_tile=False):
         """
-        If Teach=OFF => collision-based scoring, tile collisions produce NO sound,
-        but user press => sound + scoring.
-        If Teach=ON => tile collisions produce sound, no collisions-based scoring.
-        Pressing a key always spawns a FlyingNote, but sound depends on the logic below.
+        Handles playing sounds and scoring logic based on teach mode.
         """
 
-        current_ms = int(time.time()*1000)
+        current_ms = int(time.time() * 1000)
 
-        # 1) from_tile & Teach=ON => produce sound
-        if from_tile and (not self.auto_play_muted):
+        # 1) If the note is triggered by a falling tile and Teach is ON
+        if from_tile and not self.auto_play_muted:
             if note_name in self.sounds:
                 self.sounds[note_name].play()
             return
 
-        # 2) user pressing, Teach=OFF => collisions scoring, user still hears sound
-        if (not from_tile) and self.auto_play_muted:
-            # produce sound anyway
+        # 2) If the user presses a key and Teach is OFF (manual scoring)
+        if not from_tile and self.auto_play_muted:
+            # Always play the sound when pressing a key
             if note_name in self.sounds:
                 self.sounds[note_name].play()
 
-            if len(self.collisions)==0:
+            if not self.collisions:
+                # No notes in proximity, penalize
                 self.addScore(-5)
-                return
-            if note_name in self.collisions:
-                ctime=self.collisions[note_name]
-                if current_ms-ctime <= self.tile_score_window_ms:
-                    self.addScore(10)
-                else:
-                    self.addScore(-5)
-                del self.collisions[note_name]
             else:
-                self.addScore(-5)
+                matched_collision = None
+                for collision in self.collisions:
+                    if collision['note_name'] == note_name:
+                        if current_ms - collision['ctime'] <= self.tile_score_window_ms:
+                            matched_collision = collision
+                            break
+
+                if matched_collision:
+                    self.addScore(10)
+                    self.collisions.remove(matched_collision)
+                else:
+                    # Wrong key pressed while a note is in proximity
+                    self.addScore(-5)
+
+            # Always spawn a flying note for visual feedback
             self.spawnFlyingNoteOnKey(note_name)
             return
 
-        # 3) user pressing, Teach=ON => normal
-        if (not from_tile) and (not self.auto_play_muted):
+        # 3) If the user presses a key and Teach is ON
+        if not from_tile and not self.auto_play_muted:
             if note_name in self.sounds:
                 self.sounds[note_name].play()
             self.spawnFlyingNoteOnKey(note_name)
             return
-
-        # 4) from_tile & Teach=OFF => no sound
-        # but let's do nothing else
-        # flying note typically spawns on user press, not tile collisions
-
-        # if we do want a flying note from tile collisions with Teach=OFF => we can do that
-        # but user didn't request it
 
     def spawnFlyingNoteOnKey(self, note_name):
         # find button
@@ -755,16 +758,16 @@ class ARPiano(QMainWindow):
                 # revert style to original
                 btn.setStyleSheet(self.keyStyles[nm])
 
-        # collisions => missed => -2
+        # Handle missed notes
         if self.auto_play_muted:
             current_ms=int(time.time()*1000)
-            to_remove=[]
-            for note_name, ctime in self.collisions.items():
-                if current_ms-ctime>self.tile_score_window_ms:
+            to_remove = []
+            for collision in self.collisions:
+                if current_ms - collision['ctime'] > self.tile_score_window_ms:
                     self.addScore(-2)
-                    to_remove.append(note_name)
-            for n in to_remove:
-                del self.collisions[n]
+                    to_remove.append(collision)
+            for collision in to_remove:
+                self.collisions.remove(collision)
 
         self.skeleton_overlay.skeleton_data = all_lines
         self.skeleton_overlay.points_data = all_points
