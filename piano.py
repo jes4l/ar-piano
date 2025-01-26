@@ -7,10 +7,10 @@ import math
 import time
 
 from PyQt5.QtGui import (
-    QImage, QPixmap, QGuiApplication, QPainter, QPen, QColor
+    QImage, QPixmap, QGuiApplication, QPainter, QPen, QColor, QFont
 )
 from PyQt5.QtWidgets import (
-    QApplication, QMainWindow, QLabel, QPushButton, QStatusBar
+    QApplication, QMainWindow, QLabel, QPushButton, QStatusBar, QComboBox
 )
 from PyQt5.QtCore import QTimer, QRect, Qt, QPoint
 
@@ -33,18 +33,18 @@ class SkeletonOverlay(QLabel):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Example: skeleton lines in white, landmarks in red
+        # Skeleton lines in white
         pen_line = QPen(QColor(255, 255, 255, 200), 3)
         painter.setPen(pen_line)
         for line in self.skeleton_data:
             (x1, y1), (x2, y2) = line
             painter.drawLine(QPoint(x1, y1), QPoint(x2, y2))
 
+        # Landmarks in red
         pen_points = QPen(QColor(255, 0, 0, 200), 6)
         painter.setPen(pen_points)
         for (px, py) in self.points_data:
             painter.drawPoint(QPoint(px, py))
-
 
 class FlyingNote(QLabel):
     """
@@ -67,10 +67,9 @@ class FlyingNote(QLabel):
         self.vx = speed * math.cos(angle)
         self.vy = speed * math.sin(angle)
 
-        # Timer for movement (~30fps)
         self.update_timer = QTimer()
         self.update_timer.timeout.connect(self.update_position)
-        self.update_timer.start(33)
+        self.update_timer.start(33)  # ~30fps
 
     def update_position(self):
         self.elapsed_ms += 33
@@ -83,7 +82,6 @@ class FlyingNote(QLabel):
         ny = self.y() + self.vy
         self.move(int(nx), int(ny))
 
-
 class EffectOverlay(QLabel):
     """
     Transparent overlay above skeleton to host FlyingNote objects so they appear on top.
@@ -93,7 +91,6 @@ class EffectOverlay(QLabel):
         self.setGeometry(0, 0, width, height)
         self.setStyleSheet("background: transparent;")
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-
 
 class FallingTile(QLabel):
     """
@@ -110,7 +107,7 @@ class FallingTile(QLabel):
         self.fall_speed = fall_speed
         self.is_finished = False
 
-        # We'll use a 70% of key width for a square tile
+        # We'll use ~70% of key width for a square tile
         tile_side = int(self.key_rect.width() * 0.7)
         self.resize(tile_side, tile_side)
 
@@ -149,18 +146,14 @@ class FallingTile(QLabel):
         key_top = self.key_rect.y()
 
         if tile_bottom >= key_top:
-            # If auto-play is NOT muted, we trigger note
-            # If auto-play is muted, we record collision time so user can get points
-            # if they manually hit that note soon after.
             current_ms = int(time.time() * 1000)
             if not self.piano.auto_play_muted:
                 self.piano.trigger_note_by_name(self.note_name, from_tile=True)
             else:
-                # Record collision time
+                # Record collision time so user can get points if they manually hit soon
                 self.piano.last_tile_collision_time_for_note[self.note_name] = current_ms
 
             self.is_finished = True
-
 
 class TileOverlay(QLabel):
     """
@@ -182,12 +175,13 @@ class TileOverlay(QLabel):
 
     def spawnTile(self, note_name, fall_speed=4):
         """
-        If multiple spawns for the same note happen quickly, shift horizontally by 20px per existing tile.
+        If multiple spawns for the same note happen quickly,
+        shift horizontally by 20px per existing tile.
         """
         active_count = sum(1 for t in self.tiles if t.note_name == note_name and not t.is_finished)
         x_offset = active_count * 20
 
-        # find key geometry
+        # Find key geometry
         key_rect = None
         for (btn, nm) in self.piano.keys_info:
             if nm == note_name:
@@ -206,26 +200,24 @@ class TileOverlay(QLabel):
                 self.tiles.remove(t)
                 t.deleteLater()
 
-
 class ARPiano(QMainWindow):
     """
-    AR Piano with:
+    AR Piano Teaching Machine:
     - Touch-lift approach for AR fingertip triggers
     - Flying notes on triggered keys
     - Skeleton overlay
-    - Mute/unmute button for auto-play tile collisions
-    - 'Happy Birthday' auto-play with smaller square tiles (with border)
+    - "Teach You To Play" toggle for auto-play tile collisions
+    - 'Happy Birthday' or 'Interstellar' auto-play with smaller square tiles (with border)
     - Multiple spawns for the same note horizontally offset
-    - **Scoring**: If auto-play is muted and user hits the correct note
-      within ~300 ms of the tile collision, +10 points
+    - Score system: +10 if user hits the correct note within ~300 ms of tile collision
+      (only if "Teach You To Play" is ON => i.e. auto-play is OFF for tiles).
     """
-
     FINGER_TIPS =  [8, 12, 16, 20]   # index, middle, ring, pinky
     FINGER_PIPS =  [6, 10, 14, 18]
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AR Piano - Square Tiles + Borders + Mute Toggle + Score")
+        self.setWindowTitle("AR Piano Teaching Machine")
 
         # 1) Initialize Pygame
         pygame.init()
@@ -268,7 +260,7 @@ class ARPiano(QMainWindow):
         # 9) Status bar
         self.setStatusBar(QStatusBar(self))
 
-        # 10) MediaPipe Hands
+        # 10) MediaPipe
         self.mp_hands = mp.solutions.hands
         self.hands = self.mp_hands.Hands(
             static_image_mode=False,
@@ -302,24 +294,27 @@ class ARPiano(QMainWindow):
         self.timer.timeout.connect(self.update_camera)
         self.timer.start(30)
 
-        # 16) Mute button for auto-play collisions
+        # 16) "Teach You To Play" toggle
         self.auto_play_muted = False
-        self.createMuteButton()
+        self.createTeachToggleButton()
 
-        # 17) Score system
+        # 17) "Show Notes" toggle
+        self.show_notes = True
+        self.createShowNotesToggleButton()
+
+        # 18) Score system
         self.score = 0
         self.scoreLabel = QLabel("Score: 0", self)
         self.scoreLabel.setStyleSheet("color: white; font-size: 20px;")
         self.scoreLabel.setGeometry(20, 10, 200, 40)
         self.scoreLabel.show()
 
-        # Dictionary storing last tile collision time for each note
-        # If auto_play_muted is True, tile collision time is recorded
+        # For tile collisions if auto_play_muted
         self.last_tile_collision_time_for_note = {}
-        self.tile_score_window_ms = 300  # within 300 ms user can get +10
+        self.tile_score_window_ms = 300
 
-        # 18) Schedule 'Happy Birthday' after 2s
-        QTimer.singleShot(2000, self.spawnHappyBirthdayTiles)
+        # 19) Music selection UI
+        self.createMusicSelection()
 
     def load_sounds(self):
         base = "C:/Users/LLR User/Desktop/music/Sounds/"
@@ -355,6 +350,10 @@ class ARPiano(QMainWindow):
         total_w = num_white * key_w
         x_start = (self.screen_w - total_w) / 2
 
+        # Store piano layout for alignment purposes
+        self.piano_x_start = x_start
+        self.piano_total_w = total_w
+
         margin_bottom = self.screen_h * 0.20
         y_pos = self.screen_h - key_h - margin_bottom
 
@@ -373,6 +372,8 @@ class ARPiano(QMainWindow):
             btn.clicked.connect(self.play_sound)
             self.keys_info.append((btn, note_name))
 
+            # Note: Removed separate QLabel for note names to avoid duplication
+
     def create_black_keys(self):
         black_keys = [
             ("c40", "2"), ("d40", "3"), ("f40", "5"), ("g40", "6"), ("a40", "7"),
@@ -387,7 +388,6 @@ class ARPiano(QMainWindow):
         x_white_start = (self.screen_w - total_white_w) / 2
         margin_bottom = self.screen_h * 0.20
         y_white_pos = self.screen_h - (self.screen_h / 3.0) - margin_bottom
-        y_black_pos = y_white_pos
 
         offsets = [
             white_key_w*0.7,  white_key_w*1.7,  white_key_w*3.7,
@@ -411,30 +411,146 @@ class ARPiano(QMainWindow):
             btn.clicked.connect(self.play_sound)
             self.keys_info.append((btn, note_name))
 
-    def createMuteButton(self):
+            # Note: Removed separate QLabel for note names to avoid duplication
+
+    def createTeachToggleButton(self):
         """
-        Adds a button below the piano in the center, toggling auto-play tile collisions on/off.
+        Creates the "Teach You To Play" toggle button positioned aligned with the right edge of the piano.
+        Slightly shifted to the right by 10 pixels for better alignment.
         """
-        self.muteButton = QPushButton("Toggle Auto-Play Sound: ON", self)
-        btn_w, btn_h = 240, 40
-        x_pos = (self.screen_w - btn_w) // 2
-        y_pos = int(self.screen_h * 0.85)
-        self.muteButton.setGeometry(x_pos, y_pos, btn_w, btn_h)
-        self.muteButton.setStyleSheet("""
+        self.teachButton = QPushButton("Teach You To Play: ON", self)
+        btn_w, btn_h = 200, 30  # Same size as Play Selected Music button
+        padding_right = 20
+        padding_between_buttons = 10
+        shift_right = 10  # Shift to the right by 10 pixels
+
+        # Align with the right edge of the piano and shift right
+        x_pos = self.piano_x_start + self.piano_total_w - btn_w - padding_right + shift_right
+        y_buttons = int(0.82 * self.screen_h)  # Positioned below the piano
+
+        self.teachButton.setGeometry(int(x_pos), int(y_buttons), btn_w, btn_h)
+        self.teachButton.setStyleSheet("""
             background-color: rgba(200, 200, 200, 200);
-            font-size: 16px;
+            font-size: 14px;
             font-weight: bold;
         """)
-        self.muteButton.clicked.connect(self.toggleAutoPlayMute)
+        self.teachButton.clicked.connect(self.toggleTeach)
+        self.auto_play_muted = False  # Initially ON
 
-        self.auto_play_muted = False
+    def createShowNotesToggleButton(self):
+        """
+        Creates the "Show Notes" toggle button positioned below the "Teach You To Play" button aligned with the piano's right edge.
+        Slightly shifted to the right by 10 pixels for better alignment.
+        """
+        self.showNotesButton = QPushButton("Show Notes: ON", self)
+        btn_w, btn_h = 200, 30  # Same size as Play Selected Music button
+        padding_right = 20
+        padding_between_buttons = 10
+        shift_right = 10  # Shift to the right by 10 pixels
 
-    def toggleAutoPlayMute(self):
+        # Align with the right edge of the piano and shift right
+        x_pos = self.piano_x_start + self.piano_total_w - btn_w - padding_right + shift_right
+        y_buttons = int(0.82 * self.screen_h) + 40 + padding_between_buttons  # Below Teach button
+
+        self.showNotesButton.setGeometry(int(x_pos), int(y_buttons), btn_w, btn_h)
+        self.showNotesButton.setStyleSheet("""
+            background-color: rgba(200, 200, 200, 200);
+            font-size: 14px;
+            font-weight: bold;
+        """)
+        self.showNotesButton.clicked.connect(self.toggleShowNotes)
+        self.show_notes = True  # Initially ON
+
+    def toggleTeach(self):
+        """
+        Toggles the "Teach You To Play" mode.
+        """
         self.auto_play_muted = not self.auto_play_muted
         if self.auto_play_muted:
-            self.muteButton.setText("Toggle Auto-Play Sound: OFF")
+            self.teachButton.setText("Teach You To Play: OFF")
         else:
-            self.muteButton.setText("Toggle Auto-Play Sound: ON")
+            self.teachButton.setText("Teach You To Play: ON")
+
+    def toggleShowNotes(self):
+        """
+        Toggles the visibility of note names on the piano keys by hiding or showing the button texts.
+        """
+        self.show_notes = not self.show_notes
+        if self.show_notes:
+            self.showNotesButton.setText("Show Notes: ON")
+        else:
+            self.showNotesButton.setText("Show Notes: OFF")
+        for (btn, nm) in self.keys_info:
+            if self.show_notes:
+                btn.setText(nm.upper())
+            else:
+                btn.setText("")
+
+    def createMusicSelection(self):
+        """
+        Adds a combo box and 'Play Selected Music' button to choose and play music.
+        Positioned below the piano centered.
+        """
+        self.musicBox = QComboBox(self)
+        self.musicBox.addItems(["Happy Birthday (basic)", "Interstellar (basic)"])
+        box_w, box_h = 200, 30
+        play_btn_w, play_btn_h = 200, 30
+        total_width = box_w + 10 + play_btn_w
+        x_box = (self.screen_w - total_width) / 2
+        y_buttons = int(0.82 * self.screen_h)  # Positioned below the piano
+
+        self.musicBox.setGeometry(int(x_box), int(y_buttons), box_w, box_h)
+
+        self.playMusicButton = QPushButton("Play Selected Music", self)
+        self.playMusicButton.setGeometry(int(x_box + box_w + 10), int(y_buttons), play_btn_w, play_btn_h)
+        self.playMusicButton.setStyleSheet("""
+            background-color: rgba(200, 200, 200, 200);
+            font-size: 14px;
+            font-weight: bold;
+        """)
+        self.playMusicButton.clicked.connect(self.onPlayMusicClicked)
+
+    def onPlayMusicClicked(self):
+        """
+        When user clicks 'Play Selected Music', spawn the chosen piece's tiles.
+        """
+        selection = self.musicBox.currentText()
+        if "Happy Birthday" in selection:
+            self.spawnHappyBirthdayTiles()
+        elif "Interstellar" in selection:
+            self.spawnInterstellarTiles()
+        else:
+            print("Unknown selection. No tiles spawned.")
+
+    def spawnHappyBirthdayTiles(self):
+        """
+        Spawns a basic sequence of tiles for 'Happy Birthday'.
+        Each tile is smaller square with a border, offset horizontally if repeated quickly.
+        """
+        melody = [
+            ('g4', 0),    ('g4', 800),  ('a4', 800), ('g4', 800), ('c5', 800), ('b4', 1000),
+            ('g4', 800),  ('g4', 800),  ('a4', 800), ('g4', 800), ('d5', 800), ('c5', 1000),
+            ('g4', 800),  ('g4', 800),  ('g5', 800), ('e5', 800), ('c5', 800), ('b4', 800), ('a4', 1200),
+            ('f5', 800),  ('f5', 800),  ('e5', 800), ('c5', 800), ('d5', 800), ('c5', 1000)
+        ]
+        current_time = 0
+        for (note_name, delta) in melody:
+            current_time += delta
+            QTimer.singleShot(current_time, lambda n=note_name: self.tile_overlay.spawnTile(n, fall_speed=4))
+
+    def spawnInterstellarTiles(self):
+        """
+        Example 'Interstellar' basic sequence.
+        """
+        melody = [
+            ('c4', 0), ('g4', 800), ('g4', 800), ('a4', 1000),
+            ('g4', 800), ('f4', 800), ('e4', 1200), ('e4', 800),
+            ('g4', 800), ('g4', 1000)
+        ]
+        current_time = 0
+        for (note_name, delta) in melody:
+            current_time += delta
+            QTimer.singleShot(current_time, lambda n=note_name: self.tile_overlay.spawnTile(n, fall_speed=4))
 
     def play_sound(self):
         """Called when user clicks on a key (mouse or keyboard)."""
@@ -445,44 +561,41 @@ class ARPiano(QMainWindow):
         """
         Actually play the note + spawn flying note effect.
         from_tile=True => respect self.auto_play_muted (no sound if muted).
-
-        Also checks if there's a recent tile collision time for the same note (within 300ms)
-        if auto_play_muted is True => +10 points.
+        Checks for scoring if tile was recently collided (auto_play_muted).
         """
         current_ms = int(time.time() * 1000)
-
-        # If from_tile and auto_play_muted => skip playing
         if from_tile and self.auto_play_muted:
             return
 
-        # If auto_play_muted is True but note_name had a tile collision recently,
-        # check if user triggered the same note within 300 ms => +10 points
+        # If auto_play_muted is True and user hits note within tile_score_window_ms => +10
         if (not from_tile) and self.auto_play_muted:
-            # see if there's a collision time
             collision_time = self.last_tile_collision_time_for_note.get(note_name, None)
             if collision_time is not None:
                 if current_ms - collision_time <= self.tile_score_window_ms:
-                    # user hits correct note around same time => +10
                     self.addScore(10)
-                # remove collision time so can't reuse multiple times
+                # Remove collision time so it can't be reused
                 del self.last_tile_collision_time_for_note[note_name]
 
-        # Actually play the note (unless from_tile & auto_play_muted => we skip).
-        # But if we got here and from_tile is True and auto_play_muted is True => we would've returned.
         if note_name in self.sounds:
             self.sounds[note_name].play()
 
-        # spawn flying note
+        # Spawn flying note
         for (btn, nm) in self.keys_info:
             if nm == note_name:
                 self.spawnFlyingNote(btn)
                 break
 
     def addScore(self, points):
+        """
+        Adds points to the score and updates the score label.
+        """
         self.score += points
         self.scoreLabel.setText(f"Score: {self.score}")
 
     def spawnFlyingNote(self, btn):
+        """
+        Spawns a FlyingNote effect above the given button.
+        """
         if not self.notePixmaps:
             return
         pix_original = random.choice(self.notePixmaps)
@@ -523,7 +636,6 @@ class ARPiano(QMainWindow):
 
         all_lines = []
         all_points = []
-
         touched_now = set()
 
         if results.multi_hand_landmarks:
@@ -534,14 +646,14 @@ class ARPiano(QMainWindow):
                     py = int(lm.y * h)
                     pts.append((px, py))
 
-                # build skeleton lines
+                # Build skeleton lines
                 for (start_idx, end_idx) in self.HAND_CONNECTIONS:
                     sx, sy = pts[start_idx]
                     ex, ey = pts[end_idx]
                     all_lines.append([(sx, sy), (ex, ey)])
                 all_points.extend(pts)
 
-                # check fingertips
+                # Check fingertips
                 for tip_idx, pip_idx in zip(self.FINGER_TIPS, self.FINGER_PIPS):
                     tip_x, tip_y = pts[tip_idx]
                     pip_x, pip_y = pts[pip_idx]
@@ -552,7 +664,7 @@ class ARPiano(QMainWindow):
                                 r.top() <= tip_y <= r.bottom()):
                                 touched_now.add(nm)
 
-        # "Touch-lift"
+        # "Touch-lift" approach
         for (btn, nm) in self.keys_info:
             if nm in touched_now:
                 if not self.is_held[nm]:
@@ -562,12 +674,12 @@ class ARPiano(QMainWindow):
                 if self.is_held[nm]:
                     self.is_held[nm] = False
 
-        # skeleton overlay
+        # Update skeleton overlay
         self.skeleton_overlay.skeleton_data = all_lines
         self.skeleton_overlay.points_data = all_points
         self.skeleton_overlay.update()
 
-        # show camera
+        # Show camera
         frame_bgr = cv2.cvtColor(frame_rgb, cv2.COLOR_RGB2BGR)
         qt_img = QImage(frame_bgr.data, w, h, w*3, QImage.Format_BGR888)
         pixmap = QPixmap.fromImage(qt_img)
@@ -582,8 +694,7 @@ class ARPiano(QMainWindow):
     def spawnHappyBirthdayTiles(self):
         """
         Spawns a basic sequence of tiles for 'Happy Birthday'.
-        Each tile is a smaller, square note with a border.
-        Multiple spawns for the same note are horizontally offset.
+        Each tile is smaller square with a border, offset horizontally if repeated quickly.
         """
         melody = [
             ('g4', 0),    ('g4', 800),  ('a4', 800), ('g4', 800), ('c5', 800), ('b4', 1000),
@@ -596,20 +707,35 @@ class ARPiano(QMainWindow):
             current_time += delta
             QTimer.singleShot(current_time, lambda n=note_name: self.tile_overlay.spawnTile(n, fall_speed=4))
 
+    def spawnInterstellarTiles(self):
+        """
+        Example 'Interstellar' basic sequence.
+        """
+        melody = [
+            ('c4', 0), ('g4', 800), ('g4', 800), ('a4', 1000),
+            ('g4', 800), ('f4', 800), ('e4', 1200), ('e4', 800),
+            ('g4', 800), ('g4', 1000)
+        ]
+        current_time = 0
+        for (note_name, delta) in melody:
+            current_time += delta
+            QTimer.singleShot(current_time, lambda n=note_name: self.tile_overlay.spawnTile(n, fall_speed=4))
+
     def closeEvent(self, event):
+        """
+        Handles application closing: releases camera and quits Pygame.
+        """
         if self.cap.isOpened():
             self.cap.release()
         self.hands.close()
         pygame.quit()
         super().closeEvent(event)
 
-
 def main():
     app = QApplication(sys.argv)
     window = ARPiano()
     window.show()
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     main()
