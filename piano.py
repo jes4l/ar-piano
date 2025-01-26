@@ -13,7 +13,9 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QLabel, QPushButton, QStatusBar,
     QComboBox, QSlider
 )
-from PyQt5.QtCore import QTimer, QRect, Qt, QPoint
+from PyQt5.QtCore import (
+    QTimer, QRect, Qt, QPoint
+)
 
 class SkeletonOverlay(QLabel):
     """
@@ -558,7 +560,7 @@ class ARPiano(QMainWindow):
 
     def createMusicSelection(self):
         self.musicBox = QComboBox(self)
-        self.musicBox.addItems(["Happy Birthday (basic)", "Interstellar (basic)"])
+        self.musicBox.addItems(["Happy Birthday", "Interstellar"])
         box_w, box_h = 200, 30
         play_btn_w, play_btn_h = 200, 30
         total_width = box_w + 10 + play_btn_w
@@ -579,19 +581,29 @@ class ARPiano(QMainWindow):
         s = self.musicBox.currentText()
         if "Happy Birthday" in s:
             melody = [
-                ('g4',0),('g4',800),('a4',800),('g4',800),('c5',800),('b4',1000),
-                ('g4',800),('g4',800),('a4',800),('g4',800),('d5',800),('c5',1000),
+                ('g40',0),('g40',800),('a4',800),('g40',800),('c5',800),('b4',1000),
+                ('g40',800),('g40',800),('a4',800),('g40',800),('d5',800),('c5',1000),
                 ('g4',800),('g4',800),('g5',800),('e5',800),('c5',800),('b4',800),('a4',1200),
                 ('f5',800),('f5',800),('e5',800),('c5',800),('d5',800),('c5',1000)
             ]
             self.playMelodyIteratively(melody)
         elif "Interstellar" in s:
             melody = [
-                ('c4',0), ('g4',800), ('g4',800), ('a4',1000),
-                ('g4',800), ('f4',800), ('e4',1200), ('e4',800),
-                ('g4',800), ('g4',1000)
+                ('a4', 800), ('e5', 800), ('a4', 800), ('e5', 800),
+                ('b4', 800), ('e5', 800), ('b4', 800), ('e5', 800),
+
+                ('c5', 800), ('e5', 800), ('c5', 800), ('e5', 800),
+                ('d5', 800), ('e5', 800), ('d5', 800), ('e5', 800),
+
+                ('a4', 800), ('e5', 800), ('a4', 800), ('e5', 800),
+                ('b4', 800), ('e5', 800), ('b4', 800), ('e5', 800),
+
+                ('c5', 800), ('e5', 800), ('c5', 800), ('e5', 800),
+                ('d5', 800), ('e5', 800), ('d5', 800), ('e5', 800),
             ]
+
             self.playMelodyIteratively(melody)
+
 
     def playMelodyIteratively(self, melody):
         """
