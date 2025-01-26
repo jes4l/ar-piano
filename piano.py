@@ -25,7 +25,6 @@ class SkeletonOverlay(QLabel):
         # Let mouse events pass through
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
-        # For skeleton drawing
         self.skeleton_data = []  # line segments: [((x1, y1), (x2, y2)), ...]
         self.points_data = []    # list of (x, y)
 
@@ -99,10 +98,9 @@ class EffectOverlay(QLabel):
 class FallingTile(QLabel):
     """
     A square tile that drops from above to the key region.
-    - If multiple tiles for the same note occur quickly, each is horizontally offset.
-    - Once it collides with the key region, it triggers the note (unless muted),
-      and is removed.
-    - Has a border for better visual clarity.
+    - If multiple tiles for the same note occur quickly, each is horizontally offset so the user sees them distinctly.
+    - Once it collides with the key region, it triggers (or records) the note collision time if auto_play_muted is True.
+    - Has a visible border for clarity.
     """
     def __init__(self, parent, piano, note_name, key_rect, fall_speed, x_offset=0):
         super().__init__(parent)
@@ -112,18 +110,18 @@ class FallingTile(QLabel):
         self.fall_speed = fall_speed
         self.is_finished = False
 
-        # We'll create a square tile with side = ~70% of key width (for better distinction).
+        # We'll use a 70% of key width for a square tile
         tile_side = int(self.key_rect.width() * 0.7)
         self.resize(tile_side, tile_side)
 
-        # Start from above the visible region
+        # Start from above
         start_x = self.key_rect.x() + x_offset + (self.key_rect.width() - tile_side)//2
         start_y = -tile_side
         self.move(start_x, start_y)
 
-        # Fill color + border
-        self.fill_color = QColor(0, 180, 255, 180)  # semi-transparent
-        self.border_color = QColor(0, 0, 0, 220)    # black border
+        # Fill + border
+        self.fill_color = QColor(0, 180, 255, 180)
+        self.border_color = QColor(0, 0, 0, 220)
         self.border_width = 3
 
         self.show()
@@ -133,7 +131,6 @@ class FallingTile(QLabel):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # Draw border
         pen = QPen(self.border_color, self.border_width)
         painter.setPen(pen)
         painter.setBrush(self.fill_color)
@@ -143,25 +140,32 @@ class FallingTile(QLabel):
         if self.is_finished:
             return
 
-        # Move down
         nx = self.x()
         ny = self.y() + self.fall_speed
         self.move(nx, ny)
 
-        # Check collision with key
+        # Check if we intersect the key
         tile_bottom = ny + self.height()
         key_top = self.key_rect.y()
+
         if tile_bottom >= key_top:
-            # Trigger if not muted
+            # If auto-play is NOT muted, we trigger note
+            # If auto-play is muted, we record collision time so user can get points
+            # if they manually hit that note soon after.
+            current_ms = int(time.time() * 1000)
             if not self.piano.auto_play_muted:
                 self.piano.trigger_note_by_name(self.note_name, from_tile=True)
+            else:
+                # Record collision time
+                self.piano.last_tile_collision_time_for_note[self.note_name] = current_ms
+
             self.is_finished = True
 
 
 class TileOverlay(QLabel):
     """
-    Overlay for auto-play notes (like Happy Birthday).
-    Multiple tiles for the same note appear with horizontal offsets to differentiate them.
+    Overlay for auto-play notes.
+    Multiple spawns for the same note appear with horizontal offsets.
     """
     def __init__(self, parent, width, height, piano):
         super().__init__(parent)
@@ -178,7 +182,7 @@ class TileOverlay(QLabel):
 
     def spawnTile(self, note_name, fall_speed=4):
         """
-        If multiple spawns for same note appear quickly, shift horizontally by 20px per existing tile.
+        If multiple spawns for the same note happen quickly, shift horizontally by 20px per existing tile.
         """
         active_count = sum(1 for t in self.tiles if t.note_name == note_name and not t.is_finished)
         x_offset = active_count * 20
@@ -210,7 +214,10 @@ class ARPiano(QMainWindow):
     - Flying notes on triggered keys
     - Skeleton overlay
     - Mute/unmute button for auto-play tile collisions
-    - 'Happy Birthday' auto-play with smaller square tiles (with border) that can overlap, offset horizontally
+    - 'Happy Birthday' auto-play with smaller square tiles (with border)
+    - Multiple spawns for the same note horizontally offset
+    - **Scoring**: If auto-play is muted and user hits the correct note
+      within ~300 ms of the tile collision, +10 points
     """
 
     FINGER_TIPS =  [8, 12, 16, 20]   # index, middle, ring, pinky
@@ -218,7 +225,7 @@ class ARPiano(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("AR Piano")
+        self.setWindowTitle("AR Piano - Square Tiles + Borders + Mute Toggle + Score")
 
         # 1) Initialize Pygame
         pygame.init()
@@ -285,7 +292,7 @@ class ARPiano(QMainWindow):
         self.effects_overlay.raise_()
         self.effects_overlay.show()
 
-        # 14) Tile overlay with smaller square notes
+        # 14) Tile overlay
         self.tile_overlay = TileOverlay(self, self.screen_w, self.screen_h, piano=self)
         self.tile_overlay.raise_()
         self.tile_overlay.show()
@@ -299,7 +306,19 @@ class ARPiano(QMainWindow):
         self.auto_play_muted = False
         self.createMuteButton()
 
-        # 17) Schedule 'Happy Birthday' after 2s
+        # 17) Score system
+        self.score = 0
+        self.scoreLabel = QLabel("Score: 0", self)
+        self.scoreLabel.setStyleSheet("color: white; font-size: 20px;")
+        self.scoreLabel.setGeometry(20, 10, 200, 40)
+        self.scoreLabel.show()
+
+        # Dictionary storing last tile collision time for each note
+        # If auto_play_muted is True, tile collision time is recorded
+        self.last_tile_collision_time_for_note = {}
+        self.tile_score_window_ms = 300  # within 300 ms user can get +10
+
+        # 18) Schedule 'Happy Birthday' after 2s
         QTimer.singleShot(2000, self.spawnHappyBirthdayTiles)
 
     def load_sounds(self):
@@ -381,7 +400,7 @@ class ARPiano(QMainWindow):
             btn = QPushButton(note_name.upper(), self)
             btn.setObjectName(note_name)
             btn.setShortcut(shortcut)
-            btn.setGeometry(QRect(int(x), int(y_black_pos), int(black_key_w), int(black_key_h)))
+            btn.setGeometry(QRect(int(x), int(y_white_pos), int(black_key_w), int(black_key_h)))
             btn.setStyleSheet("""
                 background-color: rgba(0, 0, 0, 220);
                 border: 1px solid black;
@@ -425,19 +444,43 @@ class ARPiano(QMainWindow):
     def trigger_note_by_name(self, note_name, from_tile=False):
         """
         Actually play the note + spawn flying note effect.
-        from_tile=True => respect self.auto_play_muted.
+        from_tile=True => respect self.auto_play_muted (no sound if muted).
+
+        Also checks if there's a recent tile collision time for the same note (within 300ms)
+        if auto_play_muted is True => +10 points.
         """
+        current_ms = int(time.time() * 1000)
+
+        # If from_tile and auto_play_muted => skip playing
         if from_tile and self.auto_play_muted:
             return
 
+        # If auto_play_muted is True but note_name had a tile collision recently,
+        # check if user triggered the same note within 300 ms => +10 points
+        if (not from_tile) and self.auto_play_muted:
+            # see if there's a collision time
+            collision_time = self.last_tile_collision_time_for_note.get(note_name, None)
+            if collision_time is not None:
+                if current_ms - collision_time <= self.tile_score_window_ms:
+                    # user hits correct note around same time => +10
+                    self.addScore(10)
+                # remove collision time so can't reuse multiple times
+                del self.last_tile_collision_time_for_note[note_name]
+
+        # Actually play the note (unless from_tile & auto_play_muted => we skip).
+        # But if we got here and from_tile is True and auto_play_muted is True => we would've returned.
         if note_name in self.sounds:
             self.sounds[note_name].play()
 
-        # If you'd like to skip flying notes for tile triggers, you can do: if not from_tile:
+        # spawn flying note
         for (btn, nm) in self.keys_info:
             if nm == note_name:
                 self.spawnFlyingNote(btn)
                 break
+
+    def addScore(self, points):
+        self.score += points
+        self.scoreLabel.setText(f"Score: {self.score}")
 
     def spawnFlyingNote(self, btn):
         if not self.notePixmaps:
@@ -513,7 +556,6 @@ class ARPiano(QMainWindow):
         for (btn, nm) in self.keys_info:
             if nm in touched_now:
                 if not self.is_held[nm]:
-                    # wasn't held => trigger once
                     self.trigger_note_by_name(nm)
                     self.is_held[nm] = True
             else:
