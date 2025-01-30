@@ -10,8 +10,9 @@ Falling tiles are colour-coded (blue for white keys, pink for black keys) so you
 
 There are 2 modes, Teaching Mode ON and OFF:
 
-Teaching Mode ON: Falling tiles auto-play notes to teach melodies such as Happy Birthday and Interstellar using event-driven scheduling.
-Teaching Mode OFF: Falling tiles do not auto-play notes. Users score points +10 for hits, -5 for incorrect notes and -2 for misses by aligning key presses with falling tiles within a tolerance window.
+- Teaching Mode ON: Falling tiles auto-play keys to teach melodies such as Happy Birthday and Interstellar using event-driven scheduling.
+
+- Teaching Mode OFF: Falling tiles do not auto-play keys. Users score points +10 for hits, -5 for incorrect key hits and -2 for misses by aligning key presses with falling tiles within a tolerance window.
 
 The tempo slider can be used to adjust the tile speed upon generation between 0.5-2.0 times so you can learn based on your ability.
 
